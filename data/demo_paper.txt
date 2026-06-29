@@ -1,0 +1,22 @@
+Title: Modular Academic Agent for Paper Understanding
+
+Abstract:
+Large language models have shown strong potential in assisting scientific reading, but directly prompting a model to summarize a paper often leads to unstable outputs, missing evidence, and poor reproducibility. This paper proposes a modular academic agent framework that separates language model interaction, memory management, agent lifecycle, tool calling, file operations, and structured paper summarization.
+
+Method:
+The proposed framework contains five major components. First, an LLM wrapper provides a unified interface for normal question answering and tool calling. Second, a Memory module stores user messages, assistant messages, and tool observations. Third, a BaseAgent controls the run loop, step count, and agent state. Fourth, a ToolCallAgent lets the model choose tools while Python executes them. Fifth, a collection of academic tools supports file reading, paper summarization, and result writing.
+
+Experiments:
+We evaluate the framework on a small set of paper understanding tasks. The agent is asked to read local paper text, generate structured summaries, and save the output as Markdown files. We compare direct prompting with the tool-based agent workflow.
+
+Results:
+The modular agent produces more stable summaries than direct prompting. It also provides clearer intermediate execution traces, including which tool is called, what input is passed, and what output is returned.
+
+Contributions:
+This work demonstrates a minimal but extensible academic agent architecture. It shows how file tools, summarization tools, and tool calling can be integrated without modifying the core agent loop.
+
+Limitations:
+The current system only supports plain text input. It does not yet support PDF parsing, citation-grounded retrieval, long-context chunking, or RAG-based question answering.
+
+Reproducibility:
+The implementation uses a simple Python project structure and can be executed from the command line. The output summaries are saved to the outputs directory.

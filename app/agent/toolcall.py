@@ -17,13 +17,20 @@ class ToolCallAgent(ReActAgent):  # 定义 ToolCallAgent，它继承 ReActAgent
 
         self.tool_calls: list[ToolCall] = []  # 保存当前这一步模型返回的工具调用列表
 
-        self.final_answer = ""  # 保存模型不再调用工具时生成的最终回答
+        self.final_answer = ""  # 保存最终答案，可能来自模型普通文本，也可能来自 paper_qa / paper_summary 工具结果
+
+        self.final_answer_tool_names = {  # 定义哪些工具的输出可以作为最终答案
+            "paper_qa",  # paper_qa 用于论文问答，它的输出通常就是用户要的答案
+            "paper_summary",  # paper_summary 用于论文摘要，它的输出通常也是用户要的答案
+        }  # 最终答案工具集合定义结束
 
         self.memory.add_system_message(  # 给 Agent 的 Memory 添加系统提示词
             "You are a tool-calling agent. "  # 说明当前助手是一个工具调用 Agent
             "If a calculation is needed, call the calculator tool. "  # 要求遇到计算任务时调用 calculator
+            "If a paper question needs evidence, call the rag_search tool first. "  # 要求论文问答先调用 rag_search 检索证据
+            "After retrieving evidence, call paper_qa to answer based on the evidence. "  # 要求拿到证据后调用 paper_qa 生成答案
             "After receiving tool results, answer the user clearly. "  # 要求拿到工具结果后清楚回答用户
-            "When the task is finished, you may call the terminate tool."  # 说明任务完成时可以调用 terminate
+            "When the task is finished, call the terminate tool."  # 说明任务完成时调用 terminate
         )  # 系统提示词添加结束
 
     def think(self) -> bool:  # 实现 ReActAgent 要求的 think 方法
@@ -80,6 +87,9 @@ class ToolCallAgent(ReActAgent):  # 定义 ToolCallAgent，它继承 ReActAgent
             name=tool_call.name,  # 工具名称
             tool_call_id=tool_call.id,  # 工具调用 id
         )  # 工具消息添加结束
+
+        if result.is_success and tool_call.name in self.final_answer_tool_names:  # 如果当前工具成功执行，并且它的输出可以作为最终答案
+            self.final_answer = observation  # 把该工具的输出保存为最终答案
 
         if tool_call.name == "terminate":  # 如果当前调用的是 terminate 工具
             self.state = AgentState.FINISHED  # 把 Agent 状态设置为 FINISHED
