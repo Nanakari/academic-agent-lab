@@ -1,55 +1,115 @@
 # academic-agent-lab
 
-A small, modular academic-agent project for local paper reading, structured
-summarization, retrieval-augmented question answering, and AI research workflow
-experiments.
+An offline-first, modular AI Scientific Agent for turning local AI papers into
+traceable research proposals, experiment plans, and evaluation reports.
 
-The original `AcademicAgent` remains available through `main.py`. The new mode
-below is an incremental, offline-first extension and does not replace the
-existing tool-calling implementation.
+## Project Overview
 
-## AI Scientific Agent Mode
+This project began as an `AcademicAgent` for local paper reading, summarization,
+and RAG question answering. It now includes an `AIScientificAgent` that follows
+a broader AI research workflow:
 
-`AIScientificAgent` upgrades the project from paper understanding to a minimal
-AI scientific workflow. Given an AI research direction, it classifies the task,
-plans the workflow, searches local evidence, identifies limitations and a
-research gap, generates and ranks three ideas, designs an experiment, verifies
-the result, and saves a report.
+1. classify and plan a research task;
+2. parse and retrieve evidence from local TXT, Markdown, and text-based PDF
+   papers;
+3. identify methods, limitations, and research gaps;
+4. generate and rank research ideas;
+5. design datasets, baselines, metrics, ablations, and risk analysis;
+6. verify evidence support, novelty, experiment completeness, and
+   reproducibility;
+7. write structured JSON/Markdown reports and run fixture-based evaluation.
 
-### Architecture
+The original tool-calling `AcademicAgent` remains available through `main.py`.
+The scientific mode is an incremental extension rather than a replacement.
 
-- **Planner** — classifies `paper_reading`, `literature_analysis`,
-  `idea_generation`, `experiment_design`, or `research_proposal`, then emits a
-  structured `ResearchPlan`.
-- **Memory** — stores paper notes, ideas, experiments, and verification logs as
-  JSONL under `data/research_memory/`.
-- **Action Space** — includes local paper corpus indexing, evidence search,
-  document analysis, idea generation, experiment design, and JSON/Markdown
-  report writing.
-- **Verifier** — checks evidence grounding, similarity to saved ideas,
-  experiment completeness, and reproducibility information. A failed check
-  triggers one bounded revision.
+Python 3.11 or newer is required.
 
-The MVP reads `.txt`, `.md`, and text-based `.pdf` papers under `data/papers/`.
-It does not require a remote LLM or API key. The idea generator accepts an
-optional LLM dependency so structured model generation can be added later
-without changing the agent workflow.
+## Architecture
 
-Python 3.11 or newer is required, matching the existing project's use of
-`tomllib` and modern type annotations.
+```text
+User Query
+  ↓
+ResearchPlanner
+  ↓
+PaperCorpusIndexer / ScientificMemory
+  ↓
+ResearchIdeaGenerator / ExperimentDesigner
+  ↓
+EvidenceVerifier / NoveltyVerifier
+ExperimentVerifier / ReproducibilityVerifier
+  ↓
+ReportWriter / Evaluation
+```
 
-### Run the demo
+The implementation follows the Scientific Agent pattern:
 
-From the repository root:
+- **Planner** creates a structured `ResearchPlan`.
+- **Memory** persists paper notes, ideas, experiments, and verification logs in
+  local JSONL files.
+- **Action Space** provides paper parsing, retrieval, analysis, idea generation,
+  experiment design, and report writing.
+- **Verifier** checks evidence grounding, novelty overlap, experiment
+  completeness, and reproducibility before results are saved.
+
+More detail is available in [architecture.md](docs/architecture.md) and
+[scientific_agent_design.md](docs/scientific_agent_design.md).
+
+## Features
+
+- TXT, Markdown, and text-based PDF paper parsing
+- local keyword-based evidence retrieval
+- section/page-aware structured evidence citation
+- research gap and candidate idea generation
+- reproducible experiment plan generation
+- verifier-based reliability checks and one bounded revision
+- JSONL scientific memory
+- fixture-based scientific-agent evaluation
+- JSON and Markdown research reports
+- real local-paper validation workflow
+
+## Quick Start
+
+Install dependencies:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Run all tests:
+
+```bash
+pytest -q
+```
+
+Run the fixture-backed AI Scientific Agent demo:
 
 ```bash
 python app/ai_scientific_demo.py \
   --topic "LVLM hallucination mitigation" \
-  --papers-dir data/papers \
+  --papers-dir tests/fixtures/papers \
   --top-k 5
 ```
 
-Place local papers in the corpus directory before running:
+Run Evaluation Mode:
+
+```bash
+python app/scientific_eval_demo.py
+```
+
+Run Real Paper Validation:
+
+```bash
+python app/real_paper_validation_demo.py \
+  --topic "LVLM hallucination mitigation" \
+  --papers-dir data/papers \
+  --top-k 8
+```
+
+Local outputs are written below `outputs/` and are ignored by Git.
+
+## AI Scientific Agent Mode
+
+Place local papers in:
 
 ```text
 data/papers/
@@ -58,17 +118,12 @@ data/papers/
   paper_three.pdf
 ```
 
-Optional output directory:
+The Agent searches `data/papers/` first and then paper-derived notes in
+ScientificMemory. If neither source provides adequate evidence, the result uses
+`evidence_status: "evidence_insufficient"` and EvidenceVerifier fails
+intentionally.
 
-```bash
-python app/ai_scientific_demo.py \
-  --topic "multimodal model reliability evaluation" \
-  --papers-dir data/papers \
-  --top-k 5 \
-  --output-dir outputs/my_scientific_run
-```
-
-The default outputs are:
+Default scientific-agent outputs:
 
 ```text
 outputs/ai_scientific_agent/
@@ -76,43 +131,25 @@ outputs/ai_scientific_agent/
   report.md
 ```
 
-`result.json` contains the task type, structured plan, evidence excerpts,
-evidence status, evidence gaps, unsupported claims, literature analysis,
-candidate ideas, selected idea, experiment plan, four verification results,
-revision flag, and output paths. `report.md` presents the same information for
-human review.
-
-The Agent searches `data/papers/` first and fills remaining evidence slots from
-ScientificMemory. If neither source contains sufficiently relevant evidence,
-the result uses `evidence_status: "evidence_insufficient"` and
-EvidenceVerifier fails intentionally. This prevents an exploratory idea from
-being reported as paper-supported.
-
 ### Structured Evidence Citation
 
-Place local `.txt`, `.md`, or text-based `.pdf` papers in `data/papers/`. The
-corpus indexer splits them into `EvidenceChunk` records that retain the detected
-section, PDF page when available, source path, chunk ID, matched keywords,
-supporting sentence, retrieval score, and support level.
+Each `EvidenceChunk` retains the paper ID, title, source path, file type,
+detected section, PDF page where available, chunk ID, matched keywords,
+supporting sentence, score, and support level. Reports map ideas and key claims
+back to these chunks under:
 
-The Markdown report connects generated claims to local chunks under **Evidence
-Used**, and separately lists **Evidence Gaps** and **Unsupported Claims**. These
-citations are lightweight local provenance records, not formal BibTeX
-references. Future versions can add embedding retrieval, BibTeX management, and
-venue-specific citation formatting without changing the current report
-contract.
+- **Evidence Used**
+- **Claim-to-Evidence Citations**
+- **Evidence Gaps**
+- **Unsupported Claims**
 
-### Evaluation Mode
+These citations are lightweight local provenance records, not formal BibTeX
+references.
 
-The evaluation mode checks that local retrieval, evidence verification,
-experiment planning, and citation output continue to behave as expected on
-small reproducible fixtures. Run the bundled cases with:
+## Evaluation Mode
 
-```bash
-python app/scientific_eval_demo.py
-```
-
-To use another case file or report path:
+Evaluation uses deterministic fixture cases to test retrieval, verifier
+behavior, experiment completeness, and citation traceability:
 
 ```bash
 python app/scientific_eval_demo.py \
@@ -120,31 +157,88 @@ python app/scientific_eval_demo.py \
   --output outputs/evaluation/evaluation_report.md
 ```
 
-The current metrics are `evidence_count`, `keyword_hit_rate`,
-`section_hit_rate`, `verifier_pass_match`, `experiment_completeness`,
-`citation_completeness`, and a simple weighted `overall_score`. Results are
-written to `outputs/evaluation/evaluation_result.json` and
-`evaluation_report.md`.
+Metrics include `evidence_count`, `keyword_hit_rate`, `section_hit_rate`,
+`verifier_pass_match`, `experiment_completeness`, `citation_completeness`, and
+a weighted `overall_score`. See
+[evaluation_design.md](docs/evaluation_design.md).
 
-This is a lightweight fixture-based regression evaluation, not evidence of
-real-world scientific capability. It can later grow into a multi-topic
-benchmark with real paper collections, formal citation checks, and human
-ratings of ideas and experiment plans.
+Fixture evaluation is a regression check. It does not establish real scientific
+reasoning ability.
 
-### Current limitations
+## Real Paper Validation
 
-- Evidence retrieval uses lightweight keyword overlap over local papers and
-  saved memory; it is not an online literature search.
-- The corpus index is rebuilt in memory for each run. A later version can
-  replace lexical scoring with cached embeddings or the existing RAG stack.
-- Generated ideas and their ranking are heuristic templates in this MVP.
-- Dataset and baseline suggestions are starting points and must be checked
-  against current papers before running an experiment.
-- PDF support is limited to files with extractable text; OCR is not included.
-- Novelty checking only measures token overlap against local `ideas.jsonl`.
-
-### Run tests
+Real Paper Validation runs the same Agent and evaluation metrics against papers
+that you place locally in `data/papers/`:
 
 ```bash
-pytest -q
+python app/real_paper_validation_demo.py \
+  --topic "LVLM hallucination mitigation" \
+  --papers-dir data/papers \
+  --top-k 8
 ```
+
+Outputs:
+
+```text
+outputs/real_paper_validation/
+  result.json
+  report.md
+  evaluation_result.json
+  validation_summary.md
+```
+
+Real papers are intentionally ignored by Git. If the directory is empty, the
+command exits cleanly and asks you to add TXT/MD/PDF papers.
+
+## Example Output
+
+```text
+Selected idea:
+  Evidence-aware adaptive intervention for LVLM hallucination mitigation
+
+Evidence used:
+  Grounded LVLM Hallucination Mitigation / Method / chunk C2 / strong
+
+Unsupported claims:
+  None detected by the lightweight verifier
+
+Verifier result:
+  evidence=PASS, experiment=PASS, reproducibility=PASS
+```
+
+Actual results depend on the local paper collection and may include explicit
+evidence gaps or unsupported claims.
+
+## Reproducibility
+
+- Tests and evaluation cases are stored under `tests/fixtures/`.
+- Evaluation cases declare expected keywords, sections, evidence count,
+  verifier behavior, and required experiment fields.
+- Agent outputs record datasets, baselines, metrics, ablations, risks, and
+  implementation notes.
+- Evidence citations retain local source, section/page, chunk, score, and
+  support level.
+- Runtime outputs, research memory, and local papers are excluded from commits.
+
+## Limitations
+
+- This is not a fully autonomous research system.
+- Generated ideas are hypotheses; the system cannot prove that an idea is
+  genuinely novel.
+- Evidence retrieval depends entirely on the quality and coverage of local
+  papers.
+- Retrieval is lightweight lexical matching rather than a complete literature
+  search.
+- Local evidence citations are not formal BibTeX references.
+- PDF support requires extractable text and does not include OCR.
+- Fixture evaluation does not represent real-world scientific capability.
+- Suggested datasets and baselines must be checked before running experiments.
+
+## Future Work
+
+- embedding-based and hybrid retrieval
+- BibTeX citation management and formal reference formatting
+- larger, multi-topic scientific-agent benchmarks
+- human expert evaluation of ideas and experiment plans
+- multi-agent debate, critique, and evidence adjudication
+- sandboxed code generation and experiment execution
