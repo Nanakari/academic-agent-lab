@@ -1,7 +1,8 @@
 # academic-agent-lab
 
-An offline-first, modular AI Scientific Agent for turning local AI papers into
-traceable research proposals, experiment plans, and evaluation reports.
+academic-agent-lab is a lightweight AI Scientific Agent for AI paper analysis,
+evidence-grounded research idea generation, experiment planning, and
+verifier-based reliability checking.
 
 ## Project Overview
 
@@ -56,16 +57,33 @@ More detail is available in [architecture.md](docs/architecture.md) and
 
 ## Features
 
-- TXT, Markdown, and text-based PDF paper parsing
-- local keyword-based evidence retrieval
-- section/page-aware structured evidence citation
-- research gap and candidate idea generation
-- reproducible experiment plan generation
-- verifier-based reliability checks and one bounded revision
-- JSONL scientific memory
-- fixture-based scientific-agent evaluation
-- JSON and Markdown research reports
-- real local-paper validation workflow
+- **Paper parsing:** TXT, Markdown, and text-based PDF support
+- **Local evidence retrieval:** explainable keyword-based paper search
+- **Structured evidence citation:** paper, section/page, chunk, keywords, and
+  support level
+- **Research idea generation:** three ranked, testable candidate ideas
+- **Experiment plan generation:** datasets, baselines, metrics, ablations, and
+  risks
+- **Verifier-based reliability check:** evidence, novelty, experiment, and
+  reproducibility verification
+- **Scientific evaluation:** deterministic positive and negative fixture cases
+- **Real paper validation:** one command for local corpus validation and summary
+
+## Project Structure
+
+```text
+app/
+  agent/        # Agent lifecycle and AIScientificAgent orchestration
+  planner/      # Task classification and structured research plans
+  memory/       # JSONL paper, idea, experiment, and verification memory
+  tools/        # Paper parsing, retrieval, idea, experiment, and report tools
+  verifier/     # Evidence, novelty, experiment, and reproducibility checks
+  evaluation/   # Eval cases, metrics, runners, and validation summaries
+  schemas/      # Structured task, evidence, experiment, and evaluation models
+docs/           # Architecture, scientific-agent, and evaluation design notes
+examples/       # Short report excerpts and resume-ready project descriptions
+tests/          # Regression tests and deterministic paper fixtures
+```
 
 ## Quick Start
 
@@ -84,10 +102,7 @@ pytest -q
 Run the fixture-backed AI Scientific Agent demo:
 
 ```bash
-python app/ai_scientific_demo.py \
-  --topic "LVLM hallucination mitigation" \
-  --papers-dir tests/fixtures/papers \
-  --top-k 5
+python app/ai_scientific_demo.py --topic "LVLM hallucination mitigation" --papers-dir tests/fixtures/papers --top-k 5
 ```
 
 Run Evaluation Mode:
@@ -99,13 +114,13 @@ python app/scientific_eval_demo.py
 Run Real Paper Validation:
 
 ```bash
-python app/real_paper_validation_demo.py \
-  --topic "LVLM hallucination mitigation" \
-  --papers-dir data/papers \
-  --top-k 8
+python app/real_paper_validation_demo.py --topic "LVLM hallucination mitigation" --papers-dir data/papers --top-k 8
 ```
 
 Local outputs are written below `outputs/` and are ignored by Git.
+Place private/local papers under `data/papers/`; that directory is also ignored
+except for `.gitkeep`. `config.toml` is local configuration and must not be
+committed. Use the tracked `config.example.toml` as a safe template.
 
 ## AI Scientific Agent Mode
 
@@ -208,6 +223,12 @@ Verifier result:
 
 Actual results depend on the local paper collection and may include explicit
 evidence gaps or unsupported claims.
+
+Short tracked examples:
+
+- [Fixture report excerpt](examples/fixture_report_excerpt.md)
+- [Evaluation report excerpt](examples/evaluation_report_excerpt.md)
+- [Resume and interview descriptions](examples/resume_description.md)
 
 ## Reproducibility
 

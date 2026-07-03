@@ -89,6 +89,10 @@ class RealPaperValidationTests(unittest.TestCase):
         self.assertIn("AI Scientific Agent Mode", readme)
         self.assertIn("Evaluation Mode", readme)
         self.assertIn("Real Paper Validation", readme)
+        self.assertIn("Structured Evidence Citation", readme)
+        self.assertTrue(
+            (PROJECT_ROOT / "examples" / "resume_description.md").exists()
+        )
 
 
 if __name__ == "__main__":

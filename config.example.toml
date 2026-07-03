@@ -1,5 +1,4 @@
 [llm]
-provider = "google"
 model = "gemini-3.1-flash-lite"
 api_key = ""
 temperature = 0.0
