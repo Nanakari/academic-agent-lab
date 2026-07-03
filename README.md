@@ -23,15 +23,16 @@ the result, and saves a report.
   structured `ResearchPlan`.
 - **Memory** — stores paper notes, ideas, experiments, and verification logs as
   JSONL under `data/research_memory/`.
-- **Action Space** — includes local document analysis, evidence search, idea
-  generation, experiment design, and JSON/Markdown report writing.
+- **Action Space** — includes local paper corpus indexing, evidence search,
+  document analysis, idea generation, experiment design, and JSON/Markdown
+  report writing.
 - **Verifier** — checks evidence grounding, similarity to saved ideas,
   experiment completeness, and reproducibility information. A failed check
   triggers one bounded revision.
 
-The MVP reads `.txt`, `.md`, and text-based `.pdf` files already present under
-`data/`. It does not require a remote LLM or API key. The idea generator accepts
-an optional LLM dependency so structured model generation can be added later
+The MVP reads `.txt`, `.md`, and text-based `.pdf` papers under `data/papers/`.
+It does not require a remote LLM or API key. The idea generator accepts an
+optional LLM dependency so structured model generation can be added later
 without changing the agent workflow.
 
 Python 3.11 or newer is required, matching the existing project's use of
@@ -42,13 +43,19 @@ Python 3.11 or newer is required, matching the existing project's use of
 From the repository root:
 
 ```bash
-python app/ai_scientific_demo.py --topic "LVLM hallucination mitigation"
+python app/ai_scientific_demo.py \
+  --topic "LVLM hallucination mitigation" \
+  --papers-dir data/papers \
+  --top-k 5
 ```
 
-Another topic that matches the included demo paper is:
+Place local papers in the corpus directory before running:
 
-```bash
-python app/ai_scientific_demo.py --topic "LLM Agent Memory"
+```text
+data/papers/
+  paper_one.txt
+  paper_two.md
+  paper_three.pdf
 ```
 
 Optional output directory:
@@ -56,6 +63,8 @@ Optional output directory:
 ```bash
 python app/ai_scientific_demo.py \
   --topic "multimodal model reliability evaluation" \
+  --papers-dir data/papers \
+  --top-k 5 \
   --output-dir outputs/my_scientific_run
 ```
 
@@ -68,14 +77,23 @@ outputs/ai_scientific_agent/
 ```
 
 `result.json` contains the task type, structured plan, evidence excerpts,
-literature analysis, candidate ideas, selected idea, experiment plan, four
-verification results, revision flag, and output paths. `report.md` presents the
-same information for human review.
+evidence status, evidence gaps, unsupported claims, literature analysis,
+candidate ideas, selected idea, experiment plan, four verification results,
+revision flag, and output paths. `report.md` presents the same information for
+human review.
+
+The Agent searches `data/papers/` first and fills remaining evidence slots from
+ScientificMemory. If neither source contains sufficiently relevant evidence,
+the result uses `evidence_status: "evidence_insufficient"` and
+EvidenceVerifier fails intentionally. This prevents an exploratory idea from
+being reported as paper-supported.
 
 ### Current limitations
 
-- Evidence retrieval is lexical and limited to local project documents and
+- Evidence retrieval uses lightweight keyword overlap over local papers and
   saved memory; it is not an online literature search.
+- The corpus index is rebuilt in memory for each run. A later version can
+  replace lexical scoring with cached embeddings or the existing RAG stack.
 - Generated ideas and their ranking are heuristic templates in this MVP.
 - Dataset and baseline suggestions are starting points and must be checked
   against current papers before running an experiment.
@@ -85,5 +103,5 @@ same information for human review.
 ### Run tests
 
 ```bash
-python -m unittest discover -s tests -v
+pytest -q
 ```

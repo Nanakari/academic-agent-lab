@@ -21,6 +21,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(PROJECT_ROOT / "outputs" / "ai_scientific_agent"),
         help="Directory for result.json and report.md.",
     )
+    parser.add_argument(
+        "--papers-dir",
+        default="data/papers",
+        help="Local .txt, .md, and .pdf paper corpus (default: data/papers).",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=5,
+        help="Maximum number of evidence chunks to retrieve (default: 5).",
+    )
     return parser
 
 
@@ -29,11 +40,15 @@ def main() -> None:
     agent = AIScientificAgent(
         project_root=PROJECT_ROOT,
         output_dir=Path(args.output_dir),
+        papers_dir=Path(args.papers_dir),
+        top_k=args.top_k,
     )
     result = agent.run(args.topic)
     print(json.dumps(
         {
             "task_type": result["task_type"],
+            "evidence_status": result["evidence_status"],
+            "evidence_count": len(result["evidence_context"]),
             "verification_passed": result["verification_passed"],
             "output_paths": result["output_paths"],
         },

@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
-from typing import Iterable
 
 from app.agent.base import BaseAgent
 from app.memory.scientific_memory import ScientificMemory
 from app.planner.research_planner import ResearchPlanner
-from app.rag.document_loader import load_document_text
 from app.schema import AgentState
 from app.tools.experiment_designer import ExperimentDesigner
 from app.tools.paper_analyzer import PaperAnalyzer
+from app.tools.paper_corpus import PaperCorpusIndexer, keyword_tokens
 from app.tools.report_writer import ReportWriter
 from app.tools.research_idea_generator import ResearchIdeaGenerator
 from app.verifier.evidence_verifier import EvidenceVerifier
@@ -24,12 +22,12 @@ from app.verifier.reproducibility_verifier import ReproducibilityVerifier
 class AIScientificAgent(BaseAgent):
     """Orchestrate planning, evidence, ideation, experiments, and verification."""
 
-    SUPPORTED_DOCUMENTS = {".txt", ".md", ".pdf"}
-
     def __init__(
         self,
         project_root: str | Path | None = None,
         output_dir: str | Path | None = None,
+        papers_dir: str | Path | None = None,
+        top_k: int = 5,
         memory: ScientificMemory | None = None,
         llm=None,
     ) -> None:
@@ -44,9 +42,17 @@ class AIScientificAgent(BaseAgent):
             if output_dir
             else self.project_root / "outputs" / "ai_scientific_agent"
         )
+        requested_papers_dir = Path(papers_dir) if papers_dir else Path("data/papers")
+        self.papers_dir = (
+            requested_papers_dir.resolve()
+            if requested_papers_dir.is_absolute()
+            else (self.project_root / requested_papers_dir).resolve()
+        )
+        self.top_k = max(1, int(top_k))
         self.scientific_memory = memory or ScientificMemory(
             self.project_root / "data" / "research_memory"
         )
+        self.paper_corpus = PaperCorpusIndexer(self.papers_dir)
         self.planner = ResearchPlanner()
         self.paper_analyzer = PaperAnalyzer()
         self.idea_generator = ResearchIdeaGenerator(llm=llm)
@@ -70,7 +76,7 @@ class AIScientificAgent(BaseAgent):
             plan = self.planner.create_plan(user_query, task_type)
             self.current_step = 1
 
-            evidence_context = self._retrieve_evidence(user_query)
+            evidence_context = self._retrieve_evidence(user_query, self.top_k)
             self.current_step = 2
             literature_analysis = self._analyze_evidence(evidence_context)
             self.current_step = 3
@@ -90,6 +96,7 @@ class AIScientificAgent(BaseAgent):
                 evidence_context,
                 literature_analysis,
                 history,
+                ideas,
             )
             self.current_step = 5
 
@@ -106,15 +113,25 @@ class AIScientificAgent(BaseAgent):
                     evidence_context,
                     literature_analysis,
                     history,
+                    ideas,
                 )
             self.current_step = 6
 
+            evidence_assessment = self._build_evidence_assessment(
+                evidence_context,
+                verification["evidence"],
+            )
             result = {
                 "agent": self.name,
                 "topic": user_query.strip(),
                 "task_type": task_type.value,
                 "plan": plan.to_dict(),
                 "evidence_context": evidence_context,
+                "evidence_status": evidence_assessment["status"],
+                "evidence_used": evidence_assessment["used"],
+                "evidence_gaps": evidence_assessment["gaps"],
+                "unsupported_claims": evidence_assessment["unsupported_claims"],
+                "corpus_warnings": list(self.paper_corpus.warnings),
                 "literature_analysis": literature_analysis,
                 "candidate_ideas": [idea.to_dict() for idea in ideas],
                 "selected_idea": selected_idea.to_dict(),
@@ -144,58 +161,81 @@ class AIScientificAgent(BaseAgent):
         """BaseAgent compatibility; this orchestrator executes atomically in run()."""
         raise NotImplementedError("AIScientificAgent uses the structured run() workflow.")
 
-    def _retrieve_evidence(self, query: str, top_k: int = 5) -> list[dict]:
-        candidates = []
-        data_dir = self.project_root / "data"
-        if data_dir.exists():
-            paths = (
-                path for path in data_dir.rglob("*")
-                if path.is_file()
-                and path.suffix.casefold() in self.SUPPORTED_DOCUMENTS
-                and "research_memory" not in path.parts
+    def _retrieve_evidence(self, query: str, top_k: int | None = None) -> list[dict]:
+        """Search the paper corpus first, then fill remaining slots from memory."""
+        limit = max(1, top_k or self.top_k)
+        selected = []
+        for evidence in self.paper_corpus.search(query, top_k=limit):
+            item = evidence.to_dict()
+            source_path = Path(item["source_path"])
+            try:
+                display_source = source_path.relative_to(self.project_root).as_posix()
+            except ValueError:
+                display_source = str(source_path)
+            item.update(
+                {
+                    "source": display_source,
+                    "excerpt": item["text"],
+                    "kind": "local_paper",
+                }
             )
-            for path in paths:
-                try:
-                    text = load_document_text(path)
-                # A single unreadable local document should not abort the full corpus scan.
-                except (OSError, RuntimeError, ValueError):
-                    continue
-                for excerpt in self._chunks(text):
-                    score = self._relevance(query, excerpt)
-                    if score > 0:
-                        candidates.append(
-                            {
-                                "source": str(path.relative_to(self.project_root)),
-                                "excerpt": excerpt,
-                                "score": score,
-                                "kind": "local_document",
-                            }
-                        )
+            selected.append(item)
 
-        for record in self.scientific_memory.search_memory(query):
+        remaining = limit - len(selected)
+        if remaining > 0:
+            selected.extend(self._search_memory_evidence(query, remaining))
+
+        for index, item in enumerate(selected, start=1):
+            item["evidence_id"] = f"E{index}"
+        return selected
+
+    def _search_memory_evidence(self, query: str, limit: int) -> list[dict]:
+        records = []
+        seen = set()
+        for keyword in [query, *sorted(keyword_tokens(query))]:
+            for record in self.scientific_memory.search_memory(keyword):
+                # Only paper-derived notes are valid fallback scientific evidence.
+                if (
+                    record.get("memory_type") != "paper_note"
+                    or str(record.get("source", "")).startswith("memory:")
+                ):
+                    continue
+                record_key = (
+                    record.get("memory_type"),
+                    record.get("saved_at"),
+                    record.get("title"),
+                    record.get("source"),
+                )
+                if record_key not in seen:
+                    seen.add(record_key)
+                    records.append(record)
+
+        candidates = []
+        for record in records:
             excerpt = str(
                 record.get("summary")
                 or record.get("motivation")
                 or record.get("hypothesis")
                 or record
             )
-            score = self._relevance(query, excerpt)
+            title = str(record.get("title") or record.get("topic") or "Scientific memory")
+            score = self.paper_corpus.score_text(query, excerpt, title)
             if score > 0:
                 candidates.append(
                     {
+                        "paper_id": f"memory-{record.get('memory_type', 'record')}",
+                        "title": title,
+                        "source_path": f"memory:{record['memory_type']}",
+                        "chunk_id": str(record.get("evidence_id") or "memory-record"),
+                        "text": excerpt[:800],
                         "source": f"memory:{record['memory_type']}",
                         "excerpt": excerpt[:800],
-                        "score": score,
+                        "score": round(score, 3),
                         "kind": "scientific_memory",
                     }
                 )
-
         candidates.sort(key=lambda item: item["score"], reverse=True)
-        selected = candidates[:top_k]
-        for index, item in enumerate(selected, start=1):
-            item["evidence_id"] = f"E{index}"
-            item["score"] = round(item["score"], 3)
-        return selected
+        return candidates[:limit]
 
     def _analyze_evidence(self, evidence_context: list[dict]) -> dict:
         if not evidence_context:
@@ -226,6 +266,7 @@ class AIScientificAgent(BaseAgent):
         evidence_context,
         literature_analysis,
         history,
+        ideas,
     ) -> dict:
         results = {
             "evidence": self.evidence_verifier.verify(
@@ -235,12 +276,49 @@ class AIScientificAgent(BaseAgent):
                     literature_analysis["research_gap"],
                     *literature_analysis["existing_methods"],
                 ],
+                ideas=ideas,
             ),
             "novelty": self.novelty_verifier.verify(idea, history),
             "experiment": self.experiment_verifier.verify(experiment_plan),
             "reproducibility": self.reproducibility_verifier.verify(experiment_plan),
         }
         return {name: result.to_dict() for name, result in results.items()}
+
+    @staticmethod
+    def _build_evidence_assessment(
+        evidence_context: list[dict],
+        evidence_verification: dict,
+    ) -> dict:
+        used = [
+            {
+                "evidence_id": item["evidence_id"],
+                "paper_id": item["paper_id"],
+                "title": item["title"],
+                "source_path": item["source_path"],
+                "chunk_id": item["chunk_id"],
+                "score": item["score"],
+                "kind": item["kind"],
+            }
+            for item in evidence_context
+        ]
+        gaps = []
+        if not any(item["kind"] == "local_paper" for item in evidence_context):
+            gaps.append("No matching evidence was retrieved from the local paper corpus.")
+        gaps.extend(evidence_verification["issues"])
+        unsupported_claims = [
+            issue for issue in evidence_verification["issues"]
+            if issue.startswith("unsupported")
+        ]
+        return {
+            "status": (
+                "sufficient"
+                if evidence_verification["passed"]
+                else "evidence_insufficient"
+            ),
+            "used": used,
+            "gaps": list(dict.fromkeys(gaps)),
+            "unsupported_claims": unsupported_claims,
+        }
 
     @staticmethod
     def _revise_once(idea, experiment_plan, evidence_context):
@@ -271,6 +349,8 @@ class AIScientificAgent(BaseAgent):
 
     def _save_memory(self, result: dict) -> None:
         for evidence in result["evidence_context"]:
+            if evidence["kind"] != "local_paper":
+                continue
             self.scientific_memory.save_paper_note(
                 {
                     "topic": result["topic"],
@@ -295,35 +375,3 @@ class AIScientificAgent(BaseAgent):
                 "results": result["verification"],
             }
         )
-
-    @staticmethod
-    def _chunks(text: str, max_chars: int = 900) -> Iterable[str]:
-        paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
-        for paragraph in paragraphs:
-            for start in range(0, len(paragraph), max_chars):
-                excerpt = paragraph[start:start + max_chars].strip()
-                if len(excerpt) >= 40:
-                    yield excerpt
-
-    @classmethod
-    def _relevance(cls, query: str, text: str) -> float:
-        query_tokens = cls._tokens(query)
-        text_tokens = cls._tokens(text)
-        if not query_tokens:
-            return 0.0
-        overlap = query_tokens & text_tokens
-        substring_bonus = sum(
-            1 for token in query_tokens if len(token) >= 4 and token in text.casefold()
-        )
-        return len(overlap) / len(query_tokens) + 0.1 * substring_bonus
-
-    @staticmethod
-    def _tokens(text: str) -> set[str]:
-        latin = {
-            token for token in re.findall(r"[a-zA-Z][a-zA-Z0-9-]+", text.casefold())
-            if len(token) >= 3
-        }
-        # Character bigrams give short Chinese topic phrases a usable lexical signal.
-        chinese = "".join(re.findall(r"[\u4e00-\u9fff]", text))
-        bigrams = {chinese[index:index + 2] for index in range(len(chinese) - 1)}
-        return latin | bigrams

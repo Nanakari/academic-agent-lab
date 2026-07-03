@@ -1,0 +1,19 @@
+Title: Grounded LVLM Hallucination Mitigation
+
+Abstract:
+Large vision-language models (LVLMs) can hallucinate objects that are not
+supported by an image. We study hallucination mitigation using retrieved visual
+evidence and an uncertainty gate.
+
+Method:
+The method retrieves image-region evidence, estimates answer uncertainty, and
+routes uncertain examples through a verification stage before decoding.
+
+Experiments:
+We evaluate on POPE and MMHal-Bench against an unmodified LVLM, prompt-only
+mitigation, and self-consistency baselines. Metrics include accuracy,
+hallucination rate, latency, and token cost.
+
+Limitations:
+The uncertainty gate can be miscalibrated under domain shift, and the
+verification stage increases inference cost.

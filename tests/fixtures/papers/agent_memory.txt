@@ -1,0 +1,14 @@
+Title: Retrieval Memory for Language Model Agents
+
+Abstract:
+Language model agents need memory to maintain continuity over long tasks.
+
+Method:
+The agent retrieves relevant interaction records from a bounded local memory
+before selecting its next action.
+
+Experiments:
+We compare retrieval memory with no-memory and sliding-window baselines.
+
+Limitations:
+Retrieval mistakes can accumulate during long interactions.

@@ -40,18 +40,45 @@ class ReportWriter:
             f"{index}. **{step['name']}** — {step['description']}"
             for index, step in enumerate(result["plan"]["steps"], start=1)
         )
-        lines.extend(["", "## Local evidence", ""])
+        lines.extend([
+            "",
+            "## Evidence Used",
+            "",
+            f"Evidence status: **{result['evidence_status']}**",
+            "",
+        ])
         if result["evidence_context"]:
             for item in result["evidence_context"]:
                 lines.extend([
-                    f"### {item['evidence_id']} — `{item['source']}`",
+                    f"### {item['evidence_id']} — {item['title']}",
                     "",
-                    item["excerpt"],
+                    (
+                        f"- Source: `{item['source']}`\n"
+                        f"- Paper ID: `{item['paper_id']}`\n"
+                        f"- Chunk: `{item['chunk_id']}`\n"
+                        f"- Score: {item['score']:.3f}"
+                    ),
+                    "",
+                    item["text"],
                     "",
                 ])
         else:
             lines.extend(["No relevant local evidence was found. Claims are exploratory.", ""])
+        lines.extend(["## Evidence Gaps", ""])
+        if result["evidence_gaps"]:
+            lines.extend(f"- {gap}" for gap in result["evidence_gaps"])
+        else:
+            lines.append("- No material gaps detected by the lightweight verifier.")
+        lines.extend(["", "## Unsupported Claims", ""])
+        if result["unsupported_claims"]:
+            lines.extend(f"- {claim}" for claim in result["unsupported_claims"])
+        else:
+            lines.append("- None detected by the lightweight verifier.")
+        if result["corpus_warnings"]:
+            lines.extend(["", "### Corpus Warnings", ""])
+            lines.extend(f"- {warning}" for warning in result["corpus_warnings"])
         lines.extend([
+            "",
             "## Literature analysis",
             "",
             "### Existing methods",
@@ -111,7 +138,8 @@ class ReportWriter:
             "",
             "## Limitations",
             "",
-            "- Evidence is limited to local project documents and saved memory.",
+            "- Evidence is limited to data/papers and saved scientific memory.",
+            "- Retrieval uses lightweight lexical overlap rather than semantic embeddings.",
             "- Idea generation and ranking use lightweight heuristics in this MVP.",
             "- Benchmark and baseline choices must be checked against the latest literature before execution.",
             "",
