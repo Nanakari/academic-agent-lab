@@ -13,7 +13,8 @@ env/
 
 # Local outputs
 outputs/
-data/research_memory/*.jsonl
+data/research_memory/*
+!data/research_memory/.gitkeep
 
 # IDE files
 .vscode/

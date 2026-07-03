@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass  # 从 dataclasses 导入 dataclass，用来快速定义数据类
 
 from enum import Enum  # 从 enum 导入 Enum，用来定义枚举类型

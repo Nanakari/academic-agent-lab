@@ -1,15 +1,16 @@
 """Offline-first AI Scientific Agent MVP."""
 
+from __future__ import annotations
+
 import re
 from pathlib import Path
 from typing import Iterable
 
 from app.agent.base import BaseAgent
-from app.rag.document_loader import load_document_text
-from app.schemas.research_idea import ResearchIdea
-from app.schema import AgentState
 from app.memory.scientific_memory import ScientificMemory
 from app.planner.research_planner import ResearchPlanner
+from app.rag.document_loader import load_document_text
+from app.schema import AgentState
 from app.tools.experiment_designer import ExperimentDesigner
 from app.tools.paper_analyzer import PaperAnalyzer
 from app.tools.report_writer import ReportWriter
@@ -43,7 +44,9 @@ class AIScientificAgent(BaseAgent):
             if output_dir
             else self.project_root / "outputs" / "ai_scientific_agent"
         )
-        self.scientific_memory = memory or ScientificMemory()
+        self.scientific_memory = memory or ScientificMemory(
+            self.project_root / "data" / "research_memory"
+        )
         self.planner = ResearchPlanner()
         self.paper_analyzer = PaperAnalyzer()
         self.idea_generator = ResearchIdeaGenerator(llm=llm)
@@ -154,7 +157,8 @@ class AIScientificAgent(BaseAgent):
             for path in paths:
                 try:
                     text = load_document_text(path)
-                except (OSError, ValueError):
+                # A single unreadable local document should not abort the full corpus scan.
+                except (OSError, RuntimeError, ValueError):
                     continue
                 for excerpt in self._chunks(text):
                     score = self._relevance(query, excerpt)

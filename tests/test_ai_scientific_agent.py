@@ -40,6 +40,16 @@ class ScientificMemoryTests(unittest.TestCase):
 
 
 class AIScientificAgentTests(unittest.TestCase):
+    def test_default_memory_follows_custom_project_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = AIScientificAgent(project_root=root)
+
+            self.assertEqual(
+                agent.scientific_memory.memory_dir,
+                root.resolve() / "data" / "research_memory",
+            )
+
     def test_end_to_end_local_run_writes_both_reports(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -70,6 +80,23 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertTrue((output_dir / "report.md").exists())
             saved = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["selected_idea"]["title"], result["selected_idea"]["title"])
+
+    def test_unreadable_pdf_does_not_abort_local_evidence_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_dir = root / "data"
+            data_dir.mkdir()
+            (data_dir / "broken.pdf").write_bytes(b"not a valid PDF")
+            (data_dir / "valid.txt").write_text(
+                "Method: Agent memory retrieves relevant historical interactions.",
+                encoding="utf-8",
+            )
+            agent = AIScientificAgent(project_root=root)
+
+            evidence = agent._retrieve_evidence("agent memory")
+
+            self.assertTrue(evidence)
+            self.assertTrue(all(item["source"] != "data\\broken.pdf" for item in evidence))
 
 
 if __name__ == "__main__":

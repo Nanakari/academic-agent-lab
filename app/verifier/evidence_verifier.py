@@ -1,5 +1,7 @@
 """Evidence coverage and overclaim checks."""
 
+from __future__ import annotations
+
 import re
 
 from app.schemas.research_idea import ResearchIdea

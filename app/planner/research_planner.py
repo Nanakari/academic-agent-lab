@@ -1,5 +1,7 @@
 """Planner for the AI Scientific Agent workflow."""
 
+from __future__ import annotations
+
 from app.planner.plan_schema import ResearchPlan, ResearchPlanStep
 from app.planner.task_classifier import TaskClassifier
 from app.schemas.scientific_task import ScientificTaskType
