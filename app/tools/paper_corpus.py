@@ -1,21 +1,51 @@
-"""Lightweight local paper corpus indexing and lexical evidence retrieval."""
+"""Lightweight local paper parsing and explainable evidence retrieval."""
 
 from __future__ import annotations
 
 import hashlib
 import logging
 import re
-from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from app.rag.document_loader import load_document_text
+from app.schemas.evidence import (
+    EvidenceChunk,
+    PaperChunk,
+    PaperDocument,
+    support_level_for_score,
+)
 
 LOGGER = logging.getLogger(__name__)
 SUPPORTED_SUFFIXES = {".txt", ".md", ".pdf"}
 TOKEN_PATTERN = re.compile(r"[a-zA-Z][a-zA-Z0-9-]+|[\u4e00-\u9fff]{2,}")
+PDF_PAGE_PATTERN = re.compile(r"(?m)^\[Page\s+(\d+)\]\s*$")
+NUMBERED_HEADING_PATTERN = re.compile(
+    r"^\d+(?:\.\d+)*[.)]?\s+([A-Za-z][^.!?]{1,100})$"
+)
+KNOWN_SECTIONS = {
+    "abstract",
+    "introduction",
+    "background",
+    "related work",
+    "method",
+    "methods",
+    "methodology",
+    "approach",
+    "experiments",
+    "experiment",
+    "evaluation",
+    "results",
+    "discussion",
+    "limitations",
+    "limitation",
+    "conclusion",
+    "conclusions",
+    "future work",
+}
 STOPWORDS = {
-    "about", "after", "also", "and", "for", "from", "into", "of", "the",
-    "this", "that", "using", "with", "研究", "方法", "论文",
+    "about", "after", "also", "and", "before", "can", "for", "from", "into",
+    "may", "not", "of", "our", "the", "this", "that", "through", "using",
+    "with", "研究", "方法", "论文",
 }
 
 
@@ -30,35 +60,26 @@ def keyword_tokens(text: str) -> set[str]:
     return tokens
 
 
-@dataclass(frozen=True)
-class PaperDocument:
-    paper_id: str
-    title: str
-    source_path: str
-    text: str
-
-
-@dataclass(frozen=True)
-class PaperChunk:
-    chunk_id: str
-    text: str
-
-
-@dataclass(frozen=True)
-class EvidenceChunk:
-    paper_id: str
-    title: str
-    source_path: str
-    chunk_id: str
-    text: str
-    score: float
-
-    def to_dict(self) -> dict:
-        return asdict(self)
+def infer_supporting_claim(query_or_idea: str, chunk_text: str) -> str:
+    """Select the sentence containing the most query keywords."""
+    query_terms = keyword_tokens(query_or_idea)
+    normalized_text = re.sub(r"\s+", " ", chunk_text).strip()
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?。！？])\s+", normalized_text)
+        if len(sentence.strip()) >= 15
+    ]
+    if not sentences:
+        return normalized_text[:400]
+    best_sentence = max(
+        sentences,
+        key=lambda sentence: len(query_terms & keyword_tokens(sentence)),
+    )
+    return best_sentence[:400]
 
 
 class PaperCorpusIndexer:
-    """Scan local papers, split them, and rank chunks without a vector database."""
+    """Parse local papers and rank section/page-aware chunks."""
 
     def __init__(
         self,
@@ -102,6 +123,7 @@ class PaperCorpusIndexer:
                     ).hexdigest()[:12],
                     title=self._extract_title(text, path.stem),
                     source_path=str(path),
+                    file_type=path.suffix.casefold().lstrip("."),
                     text=text,
                 )
             )
@@ -112,8 +134,10 @@ class PaperCorpusIndexer:
         text: str,
         chunk_size: int = 800,
         overlap: int = 120,
+        page: int | None = None,
+        section: str | None = None,
     ) -> list[PaperChunk]:
-        """Split text into deterministic overlapping character chunks."""
+        """Split text while carrying page and section metadata into each chunk."""
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
         if overlap < 0 or overlap >= chunk_size:
@@ -128,64 +152,159 @@ class PaperCorpusIndexer:
         for index, start in enumerate(range(0, len(normalized), step), start=1):
             chunk_text = normalized[start:start + chunk_size].strip()
             if chunk_text:
-                chunks.append(PaperChunk(chunk_id=f"C{index}", text=chunk_text))
+                chunks.append(
+                    PaperChunk(
+                        chunk_id=f"C{index}",
+                        text=chunk_text,
+                        page=page,
+                        section=section,
+                    )
+                )
             if start + chunk_size >= len(normalized):
                 break
         return chunks
 
     def build_or_refresh_index(self) -> int:
-        """Rebuild the in-memory index from the current directory contents."""
+        """Rebuild the in-memory structured index from current corpus files."""
         self.documents = self.scan_papers(self.papers_dir)
-        self.index = [
-            (document, chunk)
-            for document in self.documents
-            for chunk in self.split_document(
-                document.text,
-                chunk_size=self.chunk_size,
-                overlap=self.overlap,
-            )
-        ]
+        self.index = []
+        for document in self.documents:
+            chunk_number = 1
+            current_section = None
+            for page, page_text in self._page_segments(document):
+                section_segments, current_section = self._section_segments(
+                    page_text,
+                    current_section,
+                )
+                for section, section_text in section_segments:
+                    for chunk in self.split_document(
+                        section_text,
+                        chunk_size=self.chunk_size,
+                        overlap=self.overlap,
+                        page=page,
+                        section=section,
+                    ):
+                        structured_chunk = PaperChunk(
+                            chunk_id=f"C{chunk_number}",
+                            text=chunk.text,
+                            page=chunk.page,
+                            section=chunk.section,
+                        )
+                        self.index.append((document, structured_chunk))
+                        chunk_number += 1
         return len(self.index)
 
     def search(self, query: str, top_k: int = 5) -> list[EvidenceChunk]:
-        """Return the highest-scoring paper chunks for a query."""
+        """Return explainable evidence chunks ranked by keyword coverage."""
         if top_k <= 0:
             return []
         self.build_or_refresh_index()
+        query_terms = keyword_tokens(query)
+        if not query_terms:
+            return []
+
         ranked = []
         for document, chunk in self.index:
-            score = self.score_text(query, chunk.text, document.title)
-            if score > 0:
-                ranked.append(
-                    EvidenceChunk(
-                        paper_id=document.paper_id,
-                        title=document.title,
-                        source_path=document.source_path,
-                        chunk_id=chunk.chunk_id,
-                        text=chunk.text,
-                        score=round(score, 3),
-                    )
+            matched_keywords = sorted(
+                query_terms
+                & (keyword_tokens(chunk.text) | keyword_tokens(document.title))
+            )
+            score = len(matched_keywords) / len(query_terms)
+            if score <= 0:
+                continue
+            ranked.append(
+                EvidenceChunk(
+                    paper_id=document.paper_id,
+                    title=document.title,
+                    source_path=document.source_path,
+                    file_type=document.file_type,
+                    page=chunk.page,
+                    section=chunk.section,
+                    chunk_id=chunk.chunk_id,
+                    text=chunk.text,
+                    score=round(score, 3),
+                    matched_keywords=matched_keywords,
+                    supporting_claim=infer_supporting_claim(query, chunk.text),
+                    support_level=support_level_for_score(score),
                 )
-        ranked.sort(key=lambda item: item.score, reverse=True)
+            )
+        ranked.sort(key=lambda item: (-item.score, item.paper_id, str(item.chunk_id)))
         return ranked[:top_k]
 
     @staticmethod
     def score_text(query: str, text: str, title: str = "") -> float:
-        """Score lexical overlap on a stable 0-1 scale."""
+        """Return query-keyword coverage on a stable 0-1 scale."""
         query_terms = keyword_tokens(query)
         if not query_terms:
             return 0.0
-        text_terms = keyword_tokens(text)
-        title_terms = keyword_tokens(title)
-        body_coverage = len(query_terms & text_terms) / len(query_terms)
-        title_coverage = len(query_terms & title_terms) / len(query_terms)
-        phrase_bonus = 0.1 if query.casefold().strip() in text.casefold() else 0.0
-        return min(1.0, 0.8 * body_coverage + 0.2 * title_coverage + phrase_bonus)
+        matched = query_terms & (keyword_tokens(text) | keyword_tokens(title))
+        return len(matched) / len(query_terms)
+
+    @staticmethod
+    def matched_keywords(query: str, text: str, title: str = "") -> list[str]:
+        """Return the exact terms responsible for a lexical match."""
+        query_terms = keyword_tokens(query)
+        return sorted(query_terms & (keyword_tokens(text) | keyword_tokens(title)))
+
+    @staticmethod
+    def _page_segments(document: PaperDocument) -> list[tuple[int | None, str]]:
+        if document.file_type != "pdf":
+            return [(None, document.text)]
+        matches = list(PDF_PAGE_PATTERN.finditer(document.text))
+        if not matches:
+            return [(None, document.text)]
+        pages = []
+        for index, match in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(document.text)
+            pages.append((int(match.group(1)), document.text[match.end():end].strip()))
+        return pages
+
+    @classmethod
+    def _section_segments(
+        cls,
+        text: str,
+        initial_section: str | None = None,
+    ) -> tuple[list[tuple[str | None, str]], str | None]:
+        segments: list[tuple[str | None, str]] = []
+        current_section = initial_section
+        buffer: list[str] = []
+        for line in text.splitlines():
+            if line.strip().casefold().startswith("title:"):
+                continue
+            heading = cls._detect_section_heading(line)
+            if heading is not None:
+                if any(part.strip() for part in buffer):
+                    segments.append((current_section, "\n".join(buffer).strip()))
+                current_section = heading
+                buffer = []
+            else:
+                buffer.append(line)
+        if any(part.strip() for part in buffer):
+            segments.append((current_section, "\n".join(buffer).strip()))
+        return segments, current_section
+
+    @staticmethod
+    def _detect_section_heading(line: str) -> str | None:
+        stripped = line.strip()
+        if not stripped or stripped.casefold().startswith("title:"):
+            return None
+        markdown_match = re.match(r"^#{1,6}\s+(.+?)\s*#*$", stripped)
+        if markdown_match:
+            return markdown_match.group(1).strip()
+        numbered_match = NUMBERED_HEADING_PATTERN.match(stripped)
+        if numbered_match:
+            return numbered_match.group(1).strip()
+        plain = stripped.rstrip(":").strip()
+        if plain.casefold() in KNOWN_SECTIONS:
+            return plain
+        return None
 
     @staticmethod
     def _extract_title(text: str, fallback: str) -> str:
         for line in text.splitlines()[:10]:
-            candidate = re.sub(r"^\s*(?:#|title\s*:)\s*", "", line, flags=re.I).strip()
-            if 4 <= len(candidate) <= 200:
-                return candidate
+            stripped = line.strip()
+            if stripped.casefold().startswith("title:"):
+                return stripped.split(":", maxsplit=1)[1].strip()
+            if stripped.startswith("# "):
+                return stripped[2:].strip()
         return fallback.replace("_", " ").replace("-", " ").strip()

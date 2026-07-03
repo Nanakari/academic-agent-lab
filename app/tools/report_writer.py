@@ -53,10 +53,19 @@ class ReportWriter:
                     f"### {item['evidence_id']} — {item['title']}",
                     "",
                     (
+                        f"- Paper: {item['title']}\n"
                         f"- Source: `{item['source']}`\n"
                         f"- Paper ID: `{item['paper_id']}`\n"
+                        f"- File Type: {item['file_type']}\n"
+                        f"- Section: {item['section'] or 'N/A'}\n"
+                        f"- Page: {item['page'] if item['page'] is not None else 'N/A'}\n"
                         f"- Chunk: `{item['chunk_id']}`\n"
-                        f"- Score: {item['score']:.3f}"
+                        f"- Score: {item['score']:.3f}\n"
+                        f"- Support Level: {item['support_level']}\n"
+                        f"- Matched Keywords: "
+                        f"{', '.join(item['matched_keywords']) or 'None'}\n"
+                        f"- Supporting Claim: "
+                        f"{item['supporting_claim'] or 'No supporting sentence identified.'}"
                     ),
                     "",
                     item["text"],
@@ -64,6 +73,24 @@ class ReportWriter:
                 ])
         else:
             lines.extend(["No relevant local evidence was found. Claims are exploratory.", ""])
+        supported_claims = result["verification"]["evidence"].get(
+            "supported_claims",
+            [],
+        )
+        if supported_claims:
+            lines.extend(["### Claim-to-Evidence Citations", ""])
+            for citation in supported_claims:
+                lines.extend([
+                    f"- Claim: {citation['claim']}",
+                    (
+                        f"  - Citation: {citation['title']} / "
+                        f"{citation['section'] or 'N/A'} / "
+                        f"page {citation['page'] if citation['page'] is not None else 'N/A'} / "
+                        f"chunk {citation['chunk_id']} "
+                        f"({citation['support_level']}, {citation['score']:.3f})"
+                    ),
+                ])
+            lines.append("")
         lines.extend(["## Evidence Gaps", ""])
         if result["evidence_gaps"]:
             lines.extend(f"- {gap}" for gap in result["evidence_gaps"])

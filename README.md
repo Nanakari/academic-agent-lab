@@ -88,6 +88,20 @@ the result uses `evidence_status: "evidence_insufficient"` and
 EvidenceVerifier fails intentionally. This prevents an exploratory idea from
 being reported as paper-supported.
 
+### Structured Evidence Citation
+
+Place local `.txt`, `.md`, or text-based `.pdf` papers in `data/papers/`. The
+corpus indexer splits them into `EvidenceChunk` records that retain the detected
+section, PDF page when available, source path, chunk ID, matched keywords,
+supporting sentence, retrieval score, and support level.
+
+The Markdown report connects generated claims to local chunks under **Evidence
+Used**, and separately lists **Evidence Gaps** and **Unsupported Claims**. These
+citations are lightweight local provenance records, not formal BibTeX
+references. Future versions can add embedding retrieval, BibTeX management, and
+venue-specific citation formatting without changing the current report
+contract.
+
 ### Current limitations
 
 - Evidence retrieval uses lightweight keyword overlap over local papers and

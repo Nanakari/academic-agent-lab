@@ -8,6 +8,7 @@ from pathlib import Path
 from app.agent.ai_scientific_agent import AIScientificAgent
 from app.memory.scientific_memory import ScientificMemory
 from app.planner.research_planner import ResearchPlanner
+from app.schemas.evidence import EvidenceChunk, support_level_for_score
 from app.schemas.research_idea import ResearchIdea
 from app.schemas.scientific_task import ScientificTaskType
 from app.tools.paper_corpus import PaperCorpusIndexer
@@ -52,12 +53,44 @@ class PaperCorpusTests(unittest.TestCase):
         documents = corpus.scan_papers()
         evidence = corpus.search("LVLM hallucination mitigation", top_k=2)
 
-        self.assertEqual(len(documents), 2)
+        self.assertEqual(len(documents), 3)
         self.assertTrue(evidence)
-        self.assertEqual(evidence[0].title, "Grounded LVLM Hallucination Mitigation")
+        self.assertTrue(
+            any(item.title == "Grounded LVLM Hallucination Mitigation" for item in evidence)
+        )
         self.assertGreater(evidence[0].score, 0.12)
         self.assertTrue(evidence[0].paper_id)
         self.assertTrue(evidence[0].chunk_id)
+
+    def test_markdown_section_and_matched_keywords_are_preserved(self) -> None:
+        corpus = PaperCorpusIndexer(FIXTURE_PAPERS)
+
+        evidence = corpus.search(
+            "LVLM hallucination visual evidence",
+            top_k=3,
+        )
+
+        method_evidence = next(
+            item for item in evidence
+            if item.title == "Structured Evidence for Reliable LVLMs"
+        )
+        self.assertEqual(method_evidence.section, "Method")
+        self.assertIsNone(method_evidence.page)
+        self.assertTrue(method_evidence.matched_keywords)
+        self.assertIn("hallucination", method_evidence.matched_keywords)
+        self.assertTrue(method_evidence.supporting_claim)
+
+    def test_split_document_accepts_page_metadata(self) -> None:
+        corpus = PaperCorpusIndexer(FIXTURE_PAPERS)
+
+        chunks = corpus.split_document(
+            "A visual evidence verifier reduces hallucination in LVLM outputs.",
+            page=3,
+            section="Method",
+        )
+
+        self.assertEqual(chunks[0].page, 3)
+        self.assertEqual(chunks[0].section, "Method")
 
 
 class EvidenceVerifierTests(unittest.TestCase):
@@ -72,7 +105,30 @@ class EvidenceVerifierTests(unittest.TestCase):
         result = EvidenceVerifier().verify(idea, [], ideas=[idea])
 
         self.assertFalse(result.passed)
-        self.assertTrue(any("no local paper" in issue for issue in result.issues))
+        self.assertEqual(result.support_level, "insufficient")
+        self.assertTrue(any("no evidence found" in issue for issue in result.issues))
+        self.assertTrue(result.unsupported_claims)
+
+    def test_support_level_thresholds(self) -> None:
+        cases = [
+            (0.60, "strong"),
+            (0.35, "moderate"),
+            (0.15, "weak"),
+            (0.14, "insufficient"),
+        ]
+
+        for score, expected in cases:
+            evidence = EvidenceChunk(
+                paper_id="paper",
+                title="Test paper",
+                source_path="paper.txt",
+                file_type="txt",
+                chunk_id="C1",
+                text="test evidence",
+                score=score,
+                support_level=support_level_for_score(score),
+            )
+            self.assertEqual(evidence.support_level, expected)
 
 
 class AIScientificAgentTests(unittest.TestCase):
@@ -124,6 +180,8 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertIn("## Evidence Used", report)
             self.assertIn("## Evidence Gaps", report)
             self.assertIn("## Unsupported Claims", report)
+            self.assertIn("Support Level", report)
+            self.assertIn("Matched Keywords", report)
 
     def test_unreadable_pdf_does_not_abort_local_evidence_scan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

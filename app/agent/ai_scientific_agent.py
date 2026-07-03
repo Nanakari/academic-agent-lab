@@ -8,9 +8,14 @@ from app.agent.base import BaseAgent
 from app.memory.scientific_memory import ScientificMemory
 from app.planner.research_planner import ResearchPlanner
 from app.schema import AgentState
+from app.schemas.evidence import support_level_for_score
 from app.tools.experiment_designer import ExperimentDesigner
 from app.tools.paper_analyzer import PaperAnalyzer
-from app.tools.paper_corpus import PaperCorpusIndexer, keyword_tokens
+from app.tools.paper_corpus import (
+    PaperCorpusIndexer,
+    infer_supporting_claim,
+    keyword_tokens,
+)
 from app.tools.report_writer import ReportWriter
 from app.tools.research_idea_generator import ResearchIdeaGenerator
 from app.verifier.evidence_verifier import EvidenceVerifier
@@ -221,16 +226,27 @@ class AIScientificAgent(BaseAgent):
             title = str(record.get("title") or record.get("topic") or "Scientific memory")
             score = self.paper_corpus.score_text(query, excerpt, title)
             if score > 0:
+                matched_keywords = self.paper_corpus.matched_keywords(
+                    query,
+                    excerpt,
+                    title,
+                )
                 candidates.append(
                     {
                         "paper_id": f"memory-{record.get('memory_type', 'record')}",
                         "title": title,
                         "source_path": f"memory:{record['memory_type']}",
+                        "file_type": "memory",
+                        "page": record.get("page"),
+                        "section": record.get("section"),
                         "chunk_id": str(record.get("evidence_id") or "memory-record"),
                         "text": excerpt[:800],
                         "source": f"memory:{record['memory_type']}",
                         "excerpt": excerpt[:800],
                         "score": round(score, 3),
+                        "matched_keywords": matched_keywords,
+                        "supporting_claim": infer_supporting_claim(query, excerpt),
+                        "support_level": support_level_for_score(score),
                         "kind": "scientific_memory",
                     }
                 )
@@ -249,15 +265,36 @@ class AIScientificAgent(BaseAgent):
             }
         combined = "\n".join(item["excerpt"] for item in evidence_context)
         extracted = self.paper_analyzer.extract_problem_method_experiment_limitation(combined)
-        limitations = extracted["limitation"]
+        method_sections = self._evidence_from_sections(
+            evidence_context,
+            {"method", "methods", "methodology", "approach"},
+        )
+        limitation_sections = self._evidence_from_sections(
+            evidence_context,
+            {"limitation", "limitations", "future work"},
+        )
+        existing_methods = method_sections or extracted["method"]
+        limitations = limitation_sections or extracted["limitation"]
         return {
-            "existing_methods": extracted["method"],
+            "existing_methods": existing_methods,
             "key_limitations": limitations,
             "research_gap": (
                 "The retrieved evidence describes existing methods but leaves unresolved: "
                 + limitations[0]
             ),
         }
+
+    @staticmethod
+    def _evidence_from_sections(
+        evidence_context: list[dict],
+        section_names: set[str],
+    ) -> list[str]:
+        """Prefer explicit section metadata over cue matching in chunk text."""
+        return [
+            item["text"]
+            for item in evidence_context
+            if str(item.get("section") or "").casefold() in section_names
+        ][:3]
 
     def _verify(
         self,
@@ -295,8 +332,14 @@ class AIScientificAgent(BaseAgent):
                 "paper_id": item["paper_id"],
                 "title": item["title"],
                 "source_path": item["source_path"],
+                "file_type": item["file_type"],
+                "page": item["page"],
+                "section": item["section"],
                 "chunk_id": item["chunk_id"],
                 "score": item["score"],
+                "matched_keywords": item["matched_keywords"],
+                "supporting_claim": item["supporting_claim"],
+                "support_level": item["support_level"],
                 "kind": item["kind"],
             }
             for item in evidence_context
@@ -305,10 +348,7 @@ class AIScientificAgent(BaseAgent):
         if not any(item["kind"] == "local_paper" for item in evidence_context):
             gaps.append("No matching evidence was retrieved from the local paper corpus.")
         gaps.extend(evidence_verification["issues"])
-        unsupported_claims = [
-            issue for issue in evidence_verification["issues"]
-            if issue.startswith("unsupported")
-        ]
+        unsupported_claims = evidence_verification["unsupported_claims"]
         return {
             "status": (
                 "sufficient"
@@ -356,6 +396,10 @@ class AIScientificAgent(BaseAgent):
                     "topic": result["topic"],
                     "source": evidence["source"],
                     "evidence_id": evidence["evidence_id"],
+                    "page": evidence["page"],
+                    "section": evidence["section"],
+                    "file_type": evidence["file_type"],
+                    "chunk_id": evidence["chunk_id"],
                     "summary": self.paper_analyzer.summarize_paper_text(
                         evidence["excerpt"],
                         max_sentences=2,
