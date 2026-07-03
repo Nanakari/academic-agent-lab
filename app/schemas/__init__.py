@@ -6,6 +6,7 @@ from app.schemas.evidence import (
     PaperDocument,
     support_level_for_score,
 )
+from app.schemas.evaluation import EvalCase, EvalCaseResult, EvalMetrics
 from app.schemas.experiment_plan import ExperimentPlan
 from app.schemas.research_idea import ResearchIdea
 from app.schemas.scientific_task import ScientificTaskType
@@ -14,6 +15,9 @@ from app.schemas.verification_result import VerificationResult
 __all__ = [
     "ExperimentPlan",
     "EvidenceChunk",
+    "EvalCase",
+    "EvalCaseResult",
+    "EvalMetrics",
     "PaperChunk",
     "PaperDocument",
     "ResearchIdea",

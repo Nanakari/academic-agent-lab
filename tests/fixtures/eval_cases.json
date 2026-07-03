@@ -1,0 +1,43 @@
+{
+  "cases": [
+    {
+      "case_id": "lvlm_hallucination_fixture",
+      "topic": "LVLM hallucination mitigation",
+      "papers_dir": "tests/fixtures/papers",
+      "expected_keywords": [
+        "hallucination",
+        "visual evidence",
+        "LVLM"
+      ],
+      "expected_sections": [
+        "Method",
+        "Limitations"
+      ],
+      "expected_min_evidence_count": 2,
+      "expected_required_experiment_fields": [
+        "datasets",
+        "baselines",
+        "metrics",
+        "ablation",
+        "risks"
+      ],
+      "should_pass_evidence_verifier": true
+    },
+    {
+      "case_id": "empty_corpus_should_fail",
+      "topic": "LVLM hallucination mitigation",
+      "papers_dir": "tests/fixtures/empty_papers",
+      "expected_keywords": [],
+      "expected_sections": null,
+      "expected_min_evidence_count": 0,
+      "expected_required_experiment_fields": [
+        "datasets",
+        "baselines",
+        "metrics",
+        "ablation",
+        "risks"
+      ],
+      "should_pass_evidence_verifier": false
+    }
+  ]
+}

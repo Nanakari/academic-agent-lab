@@ -102,6 +102,35 @@ references. Future versions can add embedding retrieval, BibTeX management, and
 venue-specific citation formatting without changing the current report
 contract.
 
+### Evaluation Mode
+
+The evaluation mode checks that local retrieval, evidence verification,
+experiment planning, and citation output continue to behave as expected on
+small reproducible fixtures. Run the bundled cases with:
+
+```bash
+python app/scientific_eval_demo.py
+```
+
+To use another case file or report path:
+
+```bash
+python app/scientific_eval_demo.py \
+  --cases tests/fixtures/eval_cases.json \
+  --output outputs/evaluation/evaluation_report.md
+```
+
+The current metrics are `evidence_count`, `keyword_hit_rate`,
+`section_hit_rate`, `verifier_pass_match`, `experiment_completeness`,
+`citation_completeness`, and a simple weighted `overall_score`. Results are
+written to `outputs/evaluation/evaluation_result.json` and
+`evaluation_report.md`.
+
+This is a lightweight fixture-based regression evaluation, not evidence of
+real-world scientific capability. It can later grow into a multi-topic
+benchmark with real paper collections, formal citation checks, and human
+ratings of ideas and experiment plans.
+
 ### Current limitations
 
 - Evidence retrieval uses lightweight keyword overlap over local papers and
