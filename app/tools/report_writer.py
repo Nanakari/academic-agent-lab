@@ -140,6 +140,7 @@ class ReportWriter:
         if research_directions:
             lines.extend(["## Candidate Research Directions", ""])
             for index, direction in enumerate(research_directions, start=1):
+                source_index = direction.get("source_idea_index")
                 supporting_evidence = (
                     ", ".join(direction.get("supporting_evidence", []))
                     or "None"
@@ -150,6 +151,10 @@ class ReportWriter:
                     (
                         f"- Source Idea: "
                         f"{direction.get('source_idea_title') or 'No source idea'}"
+                    ),
+                    (
+                        f"- Source Idea Index: "
+                        f"{source_index if source_index is not None else 'N/A'}"
                     ),
                     f"- Target Gap: {direction['target_gap']}",
                     f"- Core Problem: {direction['core_problem']}",
@@ -181,6 +186,7 @@ class ReportWriter:
                 ])
         selected_direction = result.get("selected_direction")
         if selected_direction:
+            selected_source_index = selected_direction.get("source_idea_index")
             lines.extend([
                 "## Selected Research Direction",
                 "",
@@ -188,6 +194,10 @@ class ReportWriter:
                 (
                     f"- Source Idea: "
                     f"{selected_direction.get('source_idea_title') or 'No source idea'}"
+                ),
+                (
+                    f"- Source Idea Index: "
+                    f"{selected_source_index if selected_source_index is not None else 'N/A'}"
                 ),
                 (
                     f"- Recommended Priority: "
@@ -202,6 +212,58 @@ class ReportWriter:
                     "experiment planning; its priority is assigned by a "
                     "deterministic planning heuristic."
                 ),
+                "",
+            ])
+        feasibility = result.get("feasibility_assessment")
+        if feasibility:
+            lines.extend([
+                "## Feasibility Assessment",
+                "",
+                (
+                    f"- Planning Readiness Score: "
+                    f"{feasibility['overall_score']:.3f}"
+                ),
+                f"- Recommendation: {feasibility['recommendation']}",
+                f"- Evidence Readiness: {feasibility['evidence_readiness']}",
+                (
+                    f"- Experiment Readiness: "
+                    f"{feasibility['experiment_readiness']}"
+                ),
+                (
+                    f"- Reproducibility Readiness: "
+                    f"{feasibility['reproducibility_readiness']}"
+                ),
+                (
+                    f"- Resource Requirement: "
+                    f"{feasibility['resource_requirement']}"
+                ),
+                (
+                    f"- Implementation Readiness: "
+                    f"{feasibility['implementation_readiness']}"
+                ),
+                f"- Dataset Clarity: {feasibility['dataset_clarity']}",
+                f"- Baseline Clarity: {feasibility['baseline_clarity']}",
+                f"- Metric Clarity: {feasibility['metric_clarity']}",
+                "",
+                "### Main Risks",
+                "",
+                *[f"- {risk}" for risk in feasibility["main_risks"]],
+                "",
+                "### Mitigation Strategies",
+                "",
+                *[
+                    f"- {strategy}"
+                    for strategy in feasibility["mitigation_strategies"]
+                ],
+                "",
+                "### Minimum Viable Experiment",
+                "",
+                *[
+                    f"- {step}"
+                    for step in feasibility["minimum_viable_experiment"]
+                ],
+                "",
+                f"**Assessment Note:** {feasibility['assessment_note']}",
                 "",
             ])
         lines.extend([

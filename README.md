@@ -41,6 +41,12 @@ next steps. Only the direction tied to the selected idea inherits final
 verifier results; other candidate directions remain explicitly unverified.
 This planning-stage heuristic does not prove novelty or feasibility.
 
+The selected direction also receives a planning-readiness assessment based on
+local evidence, verifier outputs, and the selected experiment plan. It
+summarizes readiness, explicit resource signals, risks, mitigations, and a
+minimum viable experiment for human review. Its score is checklist-oriented,
+not a probability of feasibility, and it does not trigger experiment execution.
+
 ## Architecture
 
 ```text

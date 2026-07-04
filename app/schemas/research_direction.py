@@ -15,6 +15,7 @@ class ResearchDirection:
     hypothesis: str
     method_sketch: str
     source_idea_title: str | None = None
+    source_idea_index: int | None = None
     supporting_evidence: list[str] = field(default_factory=list)
     evidence_support_level: str = "insufficient"
     novelty_risk: str = "unknown"

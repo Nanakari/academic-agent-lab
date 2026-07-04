@@ -8,6 +8,7 @@ from app.agent.base import BaseAgent
 from app.agent.services import (
     AgentDecisionPolicy,
     EvidenceService,
+    FeasibilityService,
     LiteratureAnalysisService,
     PersistenceService,
     ResearchDirectionService,
@@ -66,6 +67,7 @@ class AIScientificAgent(BaseAgent):
         self.report_writer = ReportWriter()
         self.decision_policy = AgentDecisionPolicy()
         self.research_direction_service = ResearchDirectionService()
+        self.feasibility_service = FeasibilityService()
         self.literature_analysis_service = LiteratureAnalysisService(
             self.paper_analyzer
         )
@@ -180,6 +182,7 @@ class AIScientificAgent(BaseAgent):
                     literature_analysis=literature_analysis,
                     candidate_ideas=ideas,
                     selected_idea=selected_idea,
+                    selected_idea_index=0,
                     evidence_context=evidence_context,
                     verification=verification,
                 )
@@ -188,6 +191,13 @@ class AIScientificAgent(BaseAgent):
                 evidence_context,
                 verification["evidence"],
                 literature_analysis,
+            )
+            feasibility_assessment = self.feasibility_service.assess(
+                selected_direction=selected_direction,
+                selected_idea=selected_idea,
+                experiment_plan=experiment_plan,
+                evidence_assessment=evidence_assessment,
+                verification=verification,
             )
             verification_passed = all(
                 item["passed"] for item in verification.values()
@@ -217,6 +227,7 @@ class AIScientificAgent(BaseAgent):
                     direction.to_dict() for direction in research_directions
                 ],
                 "selected_direction": selected_direction.to_dict(),
+                "feasibility_assessment": feasibility_assessment.to_dict(),
                 "selected_idea": selected_idea.to_dict(),
                 "experiment_plan": experiment_plan.to_dict(),
                 "verification": verification,

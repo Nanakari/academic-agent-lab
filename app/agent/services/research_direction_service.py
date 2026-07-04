@@ -18,18 +18,26 @@ class ResearchDirectionService:
         selected_idea,
         evidence_context: list[dict],
         verification: dict | None = None,
+        selected_idea_index: int | None = None,
     ) -> tuple[list[ResearchDirection], ResearchDirection]:
         selected_title = self._value(selected_idea, "title")
+        resolved_index = self._resolve_selected_index(
+            candidate_ideas,
+            selected_idea,
+            selected_idea_index,
+        )
         directions = self.generate_directions(
             topic=topic,
             literature_analysis=literature_analysis,
             candidate_ideas=candidate_ideas,
+            selected_idea_index=resolved_index,
             selected_idea_title=selected_title,
             evidence_context=evidence_context,
             verification=verification,
         )
         return directions, self.select_direction(
             directions,
+            selected_idea_index=resolved_index,
             selected_idea_title=selected_title,
         )
 
@@ -39,8 +47,9 @@ class ResearchDirectionService:
         topic: str,
         literature_analysis: dict,
         candidate_ideas: list,
-        selected_idea_title: str | None,
         evidence_context: list[dict],
+        selected_idea_index: int | None = None,
+        selected_idea_title: str | None = None,
         verification: dict | None = None,
     ) -> list[ResearchDirection]:
         if not candidate_ideas:
@@ -51,34 +60,73 @@ class ResearchDirectionService:
                     evidence_context,
                 )
             ]
+        if (
+            selected_idea_index is not None
+            and not 0 <= selected_idea_index < len(candidate_ideas)
+        ):
+            raise ValueError(
+                f"selected_idea_index={selected_idea_index} is out of range "
+                f"for {len(candidate_ideas)} candidate ideas"
+            )
+        if selected_idea_index is None and verification is not None:
+            title_matches = [
+                index
+                for index, idea in enumerate(candidate_ideas)
+                if self._value(idea, "title") == selected_idea_title
+            ]
+            if len(title_matches) != 1:
+                raise ValueError(
+                    "selected_idea_index is required when title alignment is "
+                    "missing or ambiguous"
+                )
+            selected_idea_index = title_matches[0]
 
         return [
             self._direction_from_idea(
                 topic=topic,
                 literature_analysis=literature_analysis,
                 idea=idea,
+                idea_index=index,
                 evidence_context=evidence_context,
                 verification=(
                     verification
-                    if self._value(idea, "title") == selected_idea_title
+                    if index == selected_idea_index
                     else None
                 ),
             )
-            for idea in candidate_ideas
+            for index, idea in enumerate(candidate_ideas)
         ]
 
     @staticmethod
     def select_direction(
         directions: list[ResearchDirection],
         *,
-        selected_idea_title: str | None,
+        selected_idea_index: int | None = None,
+        selected_idea_title: str | None = None,
     ) -> ResearchDirection:
         """Keep direction selection aligned with the idea used by the experiment."""
         if not directions:
             raise ValueError("directions must not be empty")
-        for direction in directions:
-            if direction.source_idea_title == selected_idea_title:
-                return direction
+        if selected_idea_index is not None:
+            for direction in directions:
+                if direction.source_idea_index == selected_idea_index:
+                    return direction
+            raise ValueError(
+                "No research direction maps to selected_idea_index="
+                f"{selected_idea_index}"
+            )
+        title_matches = [
+            direction
+            for direction in directions
+            if direction.source_idea_title == selected_idea_title
+        ]
+        if len(title_matches) == 1:
+            return title_matches[0]
+        if len(title_matches) > 1:
+            raise ValueError(
+                "selected_idea_index is required when multiple research "
+                f"directions map to selected_idea_title={selected_idea_title}"
+            )
         if selected_idea_title is not None:
             raise ValueError(
                 "No research direction maps to the selected idea: "
@@ -92,6 +140,7 @@ class ResearchDirectionService:
         topic: str,
         literature_analysis: dict,
         idea,
+        idea_index: int,
         evidence_context: list[dict],
         verification: dict | None,
     ) -> ResearchDirection:
@@ -116,6 +165,7 @@ class ResearchDirectionService:
         return ResearchDirection(
             title=title,
             source_idea_title=title,
+            source_idea_index=idea_index,
             target_gap=self._target_gap(literature_analysis),
             core_problem=(
                 self._value(idea, "motivation")
@@ -157,6 +207,7 @@ class ResearchDirectionService:
         return ResearchDirection(
             title=f"Exploratory direction for {topic}",
             source_idea_title=None,
+            source_idea_index=None,
             target_gap=self._target_gap(literature_analysis),
             core_problem=(
                 f"How to scope {topic} when no candidate idea is available."
@@ -183,6 +234,43 @@ class ResearchDirectionService:
                 "weak" if evidence_context else "insufficient",
                 "unknown",
             ),
+        )
+
+    def _resolve_selected_index(
+        self,
+        candidate_ideas: list,
+        selected_idea,
+        selected_idea_index: int | None,
+    ) -> int | None:
+        if not candidate_ideas:
+            if selected_idea_index is not None:
+                raise ValueError(
+                    "selected_idea_index cannot be set when candidate_ideas is empty"
+                )
+            return None
+        if selected_idea_index is not None:
+            if not 0 <= selected_idea_index < len(candidate_ideas):
+                raise ValueError(
+                    f"selected_idea_index={selected_idea_index} is out of range "
+                    f"for {len(candidate_ideas)} candidate ideas"
+                )
+            return selected_idea_index
+
+        for index, idea in enumerate(candidate_ideas):
+            if idea is selected_idea:
+                return index
+
+        selected_title = self._value(selected_idea, "title")
+        title_matches = [
+            index
+            for index, idea in enumerate(candidate_ideas)
+            if self._value(idea, "title") == selected_title
+        ]
+        if len(title_matches) == 1:
+            return title_matches[0]
+        raise ValueError(
+            "selected_idea_index is required when the selected idea cannot be "
+            "uniquely aligned with candidate_ideas"
         )
 
     @staticmethod

@@ -10,6 +10,7 @@ from app.agent.ai_scientific_agent import AIScientificAgent
 from app.agent.services import (
     AgentDecisionPolicy,
     EvidenceService,
+    FeasibilityService,
     LiteratureAnalysisService,
     PersistenceService,
     ResearchDirectionService,
@@ -20,6 +21,7 @@ from app.planner.research_planner import ResearchPlanner
 from app.schemas.evidence import EvidenceChunk, support_level_for_score
 from app.schemas.agent_trace import AgentTraceEntry
 from app.schemas.experiment_plan import ExperimentPlan
+from app.schemas.feasibility_assessment import FeasibilityAssessment
 from app.schemas.research_direction import ResearchDirection
 from app.schemas.research_idea import ResearchIdea
 from app.schemas.scientific_task import ScientificTaskType
@@ -502,6 +504,19 @@ class AIScientificAgentTests(unittest.TestCase):
                 result["selected_direction"]["assessment_status"],
                 "verifier_assessed_selected",
             )
+            self.assertEqual(
+                result["selected_direction"]["source_idea_index"],
+                0,
+            )
+            self.assertIn("feasibility_assessment", result)
+            self.assertIn(
+                "recommendation",
+                result["feasibility_assessment"],
+            )
+            self.assertIn(
+                "minimum_viable_experiment",
+                result["feasibility_assessment"],
+            )
             decisions = [entry["decision"] for entry in result["agent_trace"]]
             self.assertTrue(
                 "skip_revision" in decisions
@@ -528,6 +543,10 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertIn("## Selected Research Direction", report)
             self.assertIn("Evidence Support Level", report)
             self.assertIn("Recommended Priority", report)
+            self.assertIn("## Feasibility Assessment", report)
+            self.assertIn("Planning Readiness Score", report)
+            self.assertIn("Recommendation", report)
+            self.assertIn("Minimum Viable Experiment", report)
 
     def test_unreadable_pdf_does_not_abort_local_evidence_scan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -813,6 +832,7 @@ class ResearchDirectionServiceTests(unittest.TestCase):
         direction = ResearchDirection(
             title="Evidence-aware LVLM verification",
             source_idea_title="Evidence-aware verifier idea",
+            source_idea_index=0,
             target_gap="Hallucination remains under visual uncertainty.",
             core_problem="How to reduce hallucination without retraining.",
             hypothesis="Evidence verification may reduce hallucination.",
@@ -831,6 +851,7 @@ class ResearchDirectionServiceTests(unittest.TestCase):
         self.assertEqual(data["title"], "Evidence-aware LVLM verification")
         self.assertEqual(data["supporting_evidence"], ["E1"])
         self.assertEqual(data["source_idea_title"], "Evidence-aware verifier idea")
+        self.assertEqual(data["source_idea_index"], 0)
 
     def test_selected_direction_matches_selected_idea_only(self) -> None:
         directions, selected = self.service.plan(
@@ -844,6 +865,7 @@ class ResearchDirectionServiceTests(unittest.TestCase):
 
         self.assertEqual(len(directions), 2)
         self.assertEqual(selected.source_idea_title, self.ideas[0].title)
+        self.assertEqual(selected.source_idea_index, 0)
         self.assertEqual(
             selected.assessment_status,
             "verifier_assessed_selected",
@@ -917,6 +939,229 @@ class ResearchDirectionServiceTests(unittest.TestCase):
                 [direction],
                 selected_idea_title="Idea B",
             )
+
+    def test_duplicate_titles_are_aligned_by_index(self) -> None:
+        ideas = [
+            ResearchIdea(
+                title="Duplicate title",
+                hypothesis="Hypothesis zero.",
+                motivation="Motivation zero.",
+                method="Method zero.",
+            ),
+            ResearchIdea(
+                title="Duplicate title",
+                hypothesis="Hypothesis one.",
+                motivation="Motivation one.",
+                method="Method one.",
+            ),
+        ]
+
+        directions, selected = self.service.plan(
+            topic="duplicate ideas",
+            literature_analysis=self.analysis,
+            candidate_ideas=ideas,
+            selected_idea=ideas[1],
+            selected_idea_index=1,
+            evidence_context=self.evidence,
+            verification=self.verification(),
+        )
+
+        self.assertEqual(selected.source_idea_index, 1)
+        self.assertEqual(
+            directions[0].assessment_status,
+            "heuristic_unverified",
+        )
+        self.assertEqual(
+            directions[1].assessment_status,
+            "verifier_assessed_selected",
+        )
+
+    def test_out_of_range_selected_index_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "out of range"):
+            self.service.plan(
+                topic="LVLM reliability",
+                literature_analysis=self.analysis,
+                candidate_ideas=self.ideas,
+                selected_idea=self.ideas[0],
+                selected_idea_index=5,
+                evidence_context=self.evidence,
+                verification=self.verification(),
+            )
+
+    def test_duplicate_title_fallback_requires_explicit_index(self) -> None:
+        duplicate_ideas = [self.ideas[0], self.ideas[0]]
+
+        with self.assertRaisesRegex(ValueError, "required"):
+            self.service.generate_directions(
+                topic="LVLM reliability",
+                literature_analysis=self.analysis,
+                candidate_ideas=duplicate_ideas,
+                selected_idea_title=self.ideas[0].title,
+                evidence_context=self.evidence,
+                verification=self.verification(),
+            )
+
+
+class FeasibilityServiceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.service = FeasibilityService()
+        self.direction = ResearchDirection(
+            title="Evidence-aware verification",
+            source_idea_title="Evidence-aware verification",
+            source_idea_index=0,
+            target_gap="Verification remains incomplete.",
+            core_problem="How to improve grounded reliability.",
+            hypothesis="A verifier may reduce unsupported outputs.",
+            method_sketch="Route uncertain outputs through a verifier.",
+            supporting_evidence=["E1"],
+            evidence_support_level="strong",
+            novelty_risk="low",
+            feasibility_risk="low",
+            recommended_priority="high",
+            assessment_status="verifier_assessed_selected",
+        )
+        self.idea = ResearchIdea(
+            title="Evidence-aware verification",
+            hypothesis="A verifier may reduce unsupported outputs.",
+            motivation="Unsupported outputs remain under uncertainty.",
+            method="Route uncertain outputs through a lightweight verifier.",
+        )
+        self.plan = complete_experiment_plan()
+        self.evidence_assessment = {
+            "status": "sufficient",
+            "gaps": [],
+        }
+
+    @staticmethod
+    def verification(
+        *,
+        evidence_passed: bool = True,
+        experiment_passed: bool = True,
+        reproducibility_passed: bool = True,
+    ) -> dict:
+        return {
+            "evidence": {"passed": evidence_passed, "support_level": "strong"},
+            "novelty": {"passed": True},
+            "experiment": {"passed": experiment_passed},
+            "reproducibility": {"passed": reproducibility_passed},
+        }
+
+    def assess(self, verification: dict) -> FeasibilityAssessment:
+        return self.service.assess(
+            selected_direction=self.direction,
+            selected_idea=self.idea,
+            experiment_plan=self.plan,
+            evidence_assessment=self.evidence_assessment,
+            verification=verification,
+        )
+
+    def test_feasibility_assessment_serializes(self) -> None:
+        assessment = FeasibilityAssessment(
+            direction_title="Evidence-aware verification",
+            source_idea_index=0,
+            overall_score=0.72,
+            recommendation="proceed_with_caution",
+            evidence_readiness="partial",
+            experiment_readiness="partial",
+            reproducibility_readiness="ready",
+            resource_requirement="unknown",
+            implementation_readiness="partial",
+            dataset_clarity="specified",
+            baseline_clarity="specified",
+            metric_clarity="specified",
+            main_risks=["Experiment design needs refinement."],
+            mitigation_strategies=["Define a minimum viable experiment."],
+            minimum_viable_experiment=["Run one baseline comparison."],
+            assessment_note="Planning-stage only.",
+        )
+
+        data = assessment.to_dict()
+
+        self.assertEqual(data["source_idea_index"], 0)
+        self.assertEqual(data["recommendation"], "proceed_with_caution")
+        self.assertEqual(data["implementation_readiness"], "partial")
+
+    def test_evidence_failure_cannot_recommend_pilot(self) -> None:
+        assessment = self.assess(
+            self.verification(evidence_passed=False)
+        )
+
+        self.assertEqual(assessment.evidence_readiness, "insufficient")
+        self.assertEqual(assessment.recommendation, "needs_more_evidence")
+        self.assertLess(assessment.overall_score, 0.75)
+
+    def test_experiment_failure_requires_caution(self) -> None:
+        assessment = self.assess(
+            self.verification(experiment_passed=False)
+        )
+
+        self.assertEqual(assessment.experiment_readiness, "partial")
+        self.assertEqual(assessment.recommendation, "proceed_with_caution")
+
+    def test_all_passed_is_ready_for_pilot_planning(self) -> None:
+        assessment = self.assess(self.verification())
+
+        self.assertEqual(
+            assessment.recommendation,
+            "ready_for_pilot_planning",
+        )
+        self.assertGreater(assessment.overall_score, 0.75)
+        self.assertEqual(assessment.implementation_readiness, "ready")
+        self.assertTrue(
+            any("POPE" in step for step in assessment.minimum_viable_experiment)
+        )
+        self.assertTrue(
+            any(
+                "Base LVLM" in step
+                for step in assessment.minimum_viable_experiment
+            )
+        )
+
+    def test_readiness_score_does_not_double_count_direction_priority(
+        self,
+    ) -> None:
+        high_priority = self.assess(self.verification())
+        self.direction.recommended_priority = "low"
+        low_priority = self.assess(self.verification())
+
+        self.assertEqual(
+            high_priority.overall_score,
+            low_priority.overall_score,
+        )
+
+    def test_assessment_does_not_mutate_selected_inputs(self) -> None:
+        direction_before = self.direction.to_dict()
+        idea_before = self.idea.to_dict()
+        plan_before = self.plan.to_dict()
+
+        self.assess(self.verification())
+
+        self.assertEqual(self.direction.to_dict(), direction_before)
+        self.assertEqual(self.idea.to_dict(), idea_before)
+        self.assertEqual(self.plan.to_dict(), plan_before)
+
+    def test_resource_requirement_stays_unknown_without_explicit_signal(
+        self,
+    ) -> None:
+        plan = complete_experiment_plan()
+        plan.risks = ["Performance may vary across datasets."]
+        plan.implementation_notes = ["Pin dependency versions and seeds."]
+        idea = ResearchIdea(
+            title="Routing method",
+            hypothesis="Routing may improve reliability.",
+            motivation="Reliability remains limited.",
+            method="Route uncertain examples through a verifier.",
+        )
+
+        assessment = self.service.assess(
+            selected_direction=self.direction,
+            selected_idea=idea,
+            experiment_plan=plan,
+            evidence_assessment=self.evidence_assessment,
+            verification=self.verification(),
+        )
+
+        self.assertEqual(assessment.resource_requirement, "unknown")
 
 
 class AgentServiceTests(unittest.TestCase):
