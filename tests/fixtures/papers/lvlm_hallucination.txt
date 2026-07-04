@@ -15,5 +15,5 @@ mitigation, and self-consistency baselines. Metrics include accuracy,
 hallucination rate, latency, and token cost.
 
 Limitations:
-The uncertainty gate can be miscalibrated under domain shift, and the
-verification stage increases inference cost.
+For LVLM hallucination mitigation, the uncertainty gate can be miscalibrated
+under domain shift, and the verification stage increases inference cost.

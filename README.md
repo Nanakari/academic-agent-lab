@@ -105,6 +105,10 @@ Run the fixture-backed AI Scientific Agent demo:
 python app/ai_scientific_demo.py --topic "LVLM hallucination mitigation" --papers-dir tests/fixtures/papers --top-k 5
 ```
 
+The demo uses temporary isolated ScientificMemory, so running the same Quick
+Start command repeatedly does not create novelty failures from earlier demo
+runs. Application code can still use persistent `data/research_memory/`.
+
 Run Evaluation Mode:
 
 ```bash
@@ -137,6 +141,11 @@ The Agent searches `data/papers/` first and then paper-derived notes in
 ScientificMemory. If neither source provides adequate evidence, the result uses
 `evidence_status: "evidence_insufficient"` and EvidenceVerifier fails
 intentionally.
+
+Retrieval scores are driven primarily by keywords found in each chunk body.
+Paper-title matches contribute only a small bonus (at most 0.1) and cannot turn
+an unrelated body chunk into strong evidence. This remains lightweight lexical
+retrieval, not semantic relevance or entailment checking.
 
 Default scientific-agent outputs:
 

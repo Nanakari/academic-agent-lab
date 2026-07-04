@@ -31,6 +31,10 @@ The action space includes document parsing, corpus indexing, lexical retrieval,
 paper analysis, idea generation, experiment design, and report writing. The
 components use replaceable interfaces and do not require a remote LLM.
 
+Lexical retrieval is body-first: matched keywords come from chunk text, while a
+matching paper title contributes only a small ranking bonus. This reduces title
+leakage but does not provide semantic relevance guarantees.
+
 ### Verifier
 
 EvidenceVerifier maps each idea and key claim to its strongest local chunk and

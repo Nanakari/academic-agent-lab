@@ -205,11 +205,14 @@ class PaperCorpusIndexer:
 
         ranked = []
         for document, chunk in self.index:
-            matched_keywords = sorted(
-                query_terms
-                & (keyword_tokens(chunk.text) | keyword_tokens(document.title))
-            )
-            score = len(matched_keywords) / len(query_terms)
+            # Body overlap is the primary signal. A matching title contributes
+            # at most 0.1, preventing every chunk in a well-titled paper from
+            # receiving strong support.
+            matched_keywords = sorted(query_terms & keyword_tokens(chunk.text))
+            title_matches = query_terms & keyword_tokens(document.title)
+            text_score = len(matched_keywords) / len(query_terms)
+            title_bonus = 0.1 * len(title_matches) / len(query_terms)
+            score = min(1.0, text_score + title_bonus)
             if score <= 0:
                 continue
             ranked.append(
@@ -233,18 +236,21 @@ class PaperCorpusIndexer:
 
     @staticmethod
     def score_text(query: str, text: str, title: str = "") -> float:
-        """Return query-keyword coverage on a stable 0-1 scale."""
+        """Return body coverage plus a title bonus capped at 0.1."""
         query_terms = keyword_tokens(query)
         if not query_terms:
             return 0.0
-        matched = query_terms & (keyword_tokens(text) | keyword_tokens(title))
-        return len(matched) / len(query_terms)
+        text_matches = query_terms & keyword_tokens(text)
+        title_matches = query_terms & keyword_tokens(title)
+        text_score = len(text_matches) / len(query_terms)
+        title_bonus = 0.1 * len(title_matches) / len(query_terms)
+        return min(1.0, text_score + title_bonus)
 
     @staticmethod
     def matched_keywords(query: str, text: str, title: str = "") -> list[str]:
-        """Return the exact terms responsible for a lexical match."""
+        """Return body-matched terms; title-only matches are not evidence."""
         query_terms = keyword_tokens(query)
-        return sorted(query_terms & (keyword_tokens(text) | keyword_tokens(title)))
+        return sorted(query_terms & keyword_tokens(text))
 
     @staticmethod
     def _page_segments(document: PaperDocument) -> list[tuple[int | None, str]]:

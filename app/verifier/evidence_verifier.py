@@ -145,7 +145,10 @@ class EvidenceVerifier:
         for evidence in evidence_context:
             text = evidence.get("text") or evidence.get("excerpt", "")
             matched = sorted(statement_terms & keyword_tokens(text))
-            score = min(1.0, len(matched) / max(1, denominator))
+            lexical_score = min(1.0, len(matched) / max(1, denominator))
+            # Claim support cannot exceed the retrieval confidence assigned to
+            # the source chunk.
+            score = min(lexical_score, float(evidence.get("score", 0.0)))
             if score > best["score"]:
                 best = {
                     "score": round(score, 3),

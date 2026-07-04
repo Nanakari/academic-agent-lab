@@ -9,13 +9,31 @@ from app.agent.ai_scientific_agent import AIScientificAgent
 from app.memory.scientific_memory import ScientificMemory
 from app.planner.research_planner import ResearchPlanner
 from app.schemas.evidence import EvidenceChunk, support_level_for_score
+from app.schemas.experiment_plan import ExperimentPlan
 from app.schemas.research_idea import ResearchIdea
 from app.schemas.scientific_task import ScientificTaskType
 from app.tools.paper_corpus import PaperCorpusIndexer
 from app.verifier.evidence_verifier import EvidenceVerifier
+from app.verifier.experiment_verifier import ExperimentVerifier
+from app.verifier.novelty_verifier import NoveltyVerifier
+from app.verifier.reproducibility_verifier import ReproducibilityVerifier
 
 
 FIXTURE_PAPERS = Path(__file__).parent / "fixtures" / "papers"
+
+
+def complete_experiment_plan() -> ExperimentPlan:
+    return ExperimentPlan(
+        idea_title="Evidence-aware validation",
+        method="Route uncertain examples through a verifier.",
+        datasets=["POPE"],
+        baselines=["Base LVLM"],
+        metrics=["Hallucination rate"],
+        ablation=["Remove the verifier"],
+        expected_results=["Lower hallucination rate"],
+        risks=["Additional latency"],
+        implementation_notes=["Pin versions and seeds"],
+    )
 
 
 class ResearchPlannerTests(unittest.TestCase):
@@ -92,6 +110,26 @@ class PaperCorpusTests(unittest.TestCase):
         self.assertEqual(chunks[0].page, 3)
         self.assertEqual(chunks[0].section, "Method")
 
+    def test_title_only_match_is_not_strong_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paper = Path(directory) / "title_only.md"
+            paper.write_text(
+                "# LVLM Hallucination Visual Evidence\n\n"
+                "## Method\n\n"
+                "We study deterministic sorting algorithms and runtime complexity.",
+                encoding="utf-8",
+            )
+
+            evidence = PaperCorpusIndexer(directory).search(
+                "LVLM hallucination visual evidence",
+                top_k=1,
+            )
+
+            self.assertTrue(evidence)
+            self.assertEqual(evidence[0].matched_keywords, [])
+            self.assertLessEqual(evidence[0].score, 0.1)
+            self.assertEqual(evidence[0].support_level, "insufficient")
+
 
 class EvidenceVerifierTests(unittest.TestCase):
     def test_empty_corpus_fails_honestly(self) -> None:
@@ -129,6 +167,81 @@ class EvidenceVerifierTests(unittest.TestCase):
                 support_level=support_level_for_score(score),
             )
             self.assertEqual(evidence.support_level, expected)
+
+    def test_low_score_evidence_cannot_be_strong_support(self) -> None:
+        idea = ResearchIdea(
+            title="LVLM hallucination verifier",
+            hypothesis="Visual evidence reduces LVLM hallucination.",
+            motivation="Ground the answer in image regions.",
+            method="Verify answers against visual evidence.",
+            evidence_refs=["E1"],
+        )
+        evidence = [{
+            "evidence_id": "E1",
+            "paper_id": "paper",
+            "title": "Relevant title",
+            "source_path": "paper.txt",
+            "file_type": "txt",
+            "chunk_id": "C1",
+            "text": (
+                "LVLM hallucination verification uses visual evidence to ground "
+                "answers in image regions."
+            ),
+            "score": 0.1,
+        }]
+
+        result = EvidenceVerifier().verify(idea, evidence, ideas=[idea])
+
+        self.assertFalse(result.passed)
+        self.assertEqual(result.support_level, "insufficient")
+        self.assertTrue(result.unsupported_claims)
+
+
+class VerifierCoverageTests(unittest.TestCase):
+    def test_novelty_verifier_rejects_similar_and_accepts_new_idea(self) -> None:
+        existing = ResearchIdea(
+            title="Adaptive LVLM verification",
+            hypothesis="Use uncertainty for routing.",
+            motivation="Reduce hallucination.",
+            method="Route uncertain answers through visual verification.",
+        )
+        history = [existing.to_dict()]
+
+        duplicate = NoveltyVerifier().verify(existing, history)
+        new_idea = ResearchIdea(
+            title="Causal memory compression for agents",
+            hypothesis="Causal summaries improve long-horizon recall.",
+            motivation="Reduce irrelevant memory retrieval.",
+            method="Learn a causal graph over interaction summaries.",
+        )
+        novel = NoveltyVerifier().verify(new_idea, history)
+
+        self.assertFalse(duplicate.passed)
+        self.assertTrue(novel.passed)
+
+    def test_experiment_verifier_checks_all_required_fields(self) -> None:
+        verifier = ExperimentVerifier()
+        complete = complete_experiment_plan()
+
+        self.assertTrue(verifier.verify(complete).passed)
+        for field in verifier.REQUIRED_FIELDS:
+            values = complete.to_dict()
+            values[field] = []
+            with self.subTest(field=field):
+                self.assertFalse(
+                    verifier.verify(ExperimentPlan(**values)).passed
+                )
+
+    def test_reproducibility_verifier_rejects_missing_and_accepts_complete(self) -> None:
+        missing = ExperimentPlan(
+            idea_title="Incomplete plan",
+            method="",
+        )
+
+        self.assertFalse(ReproducibilityVerifier().verify(missing).passed)
+        self.assertTrue(
+            ReproducibilityVerifier().verify(complete_experiment_plan()).passed
+        )
 
 
 class AIScientificAgentTests(unittest.TestCase):

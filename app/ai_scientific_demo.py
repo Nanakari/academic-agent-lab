@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 # Support the documented invocation: python app/ai_scientific_demo.py ...
@@ -11,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.agent.ai_scientific_agent import AIScientificAgent
+from app.memory.scientific_memory import ScientificMemory
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,13 +39,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
-    agent = AIScientificAgent(
-        project_root=PROJECT_ROOT,
-        output_dir=Path(args.output_dir),
-        papers_dir=Path(args.papers_dir),
-        top_k=args.top_k,
-    )
-    result = agent.run(args.topic)
+    # Demo runs are intentionally isolated so repeated Quick Start commands are
+    # reproducible and do not pollute the project's long-lived scientific memory.
+    with tempfile.TemporaryDirectory(prefix="ai-scientific-demo-") as temp:
+        agent = AIScientificAgent(
+            project_root=PROJECT_ROOT,
+            output_dir=Path(args.output_dir),
+            papers_dir=Path(args.papers_dir),
+            top_k=args.top_k,
+            memory=ScientificMemory(Path(temp) / "memory"),
+        )
+        result = agent.run(args.topic)
     print(json.dumps(
         {
             "task_type": result["task_type"],
