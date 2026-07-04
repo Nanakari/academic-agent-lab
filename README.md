@@ -147,6 +147,12 @@ Paper-title matches contribute only a small bonus (at most 0.1) and cannot turn
 an unrelated body chunk into strong evidence. This remains lightweight lexical
 retrieval, not semantic relevance or entailment checking.
 
+Within one `PaperCorpusIndexer` instance, the parsed index is cached in memory
+and refreshed when supported files or chunk settings change. ScientificMemory
+also applies exact-key deduplication to ideas and paper notes and warns on
+malformed JSONL lines. These safeguards improve repeated local runs, but they
+are not a production database, distributed cache, or vector index.
+
 Default scientific-agent outputs:
 
 ```text

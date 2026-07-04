@@ -93,6 +93,37 @@ class PaperCorpusIndexer:
         self.documents: list[PaperDocument] = []
         self.index: list[tuple[PaperDocument, PaperChunk]] = []
         self.warnings: list[str] = []
+        self._index_signature: tuple | None = None
+
+    def _corpus_signature(self) -> tuple:
+        """Return cheap file metadata used to detect corpus changes."""
+        files = []
+        if self.papers_dir.exists():
+            for path in sorted(self.papers_dir.rglob("*")):
+                if not path.is_file() or path.suffix.casefold() not in SUPPORTED_SUFFIXES:
+                    continue
+                try:
+                    stat = path.stat()
+                except OSError:
+                    # A concurrent deletion will be reflected by the next signature.
+                    continue
+                files.append(
+                    (
+                        path.relative_to(self.papers_dir).as_posix(),
+                        stat.st_size,
+                        stat.st_mtime_ns,
+                        path.suffix.casefold(),
+                    )
+                )
+        return (self.chunk_size, self.overlap, tuple(files))
+
+    def index_is_stale(self) -> bool:
+        """Report whether the in-memory index needs to be rebuilt."""
+        return (
+            not self.index
+            or self._index_signature is None
+            or self._index_signature != self._corpus_signature()
+        )
 
     def scan_papers(self, papers_dir: Path | None = None) -> list[PaperDocument]:
         """Read supported papers while isolating failures to individual files."""
@@ -164,8 +195,11 @@ class PaperCorpusIndexer:
                 break
         return chunks
 
-    def build_or_refresh_index(self) -> int:
-        """Rebuild the in-memory structured index from current corpus files."""
+    def build_or_refresh_index(self, force: bool = False) -> int:
+        """Build the index only when corpus metadata or chunk settings changed."""
+        if not force and not self.index_is_stale():
+            return len(self.index)
+
         self.documents = self.scan_papers(self.papers_dir)
         self.index = []
         for document in self.documents:
@@ -192,13 +226,19 @@ class PaperCorpusIndexer:
                         )
                         self.index.append((document, structured_chunk))
                         chunk_number += 1
+        self._index_signature = self._corpus_signature()
         return len(self.index)
 
-    def search(self, query: str, top_k: int = 5) -> list[EvidenceChunk]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        force_refresh: bool = False,
+    ) -> list[EvidenceChunk]:
         """Return explainable evidence chunks ranked by keyword coverage."""
         if top_k <= 0:
             return []
-        self.build_or_refresh_index()
+        self.build_or_refresh_index(force=force_refresh)
         query_terms = keyword_tokens(query)
         if not query_terms:
             return []

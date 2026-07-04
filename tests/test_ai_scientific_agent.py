@@ -6,6 +6,11 @@ import unittest
 from pathlib import Path
 
 from app.agent.ai_scientific_agent import AIScientificAgent
+from app.agent.services import (
+    EvidenceService,
+    PersistenceService,
+    VerificationPipeline,
+)
 from app.memory.scientific_memory import ScientificMemory
 from app.planner.research_planner import ResearchPlanner
 from app.schemas.evidence import EvidenceChunk, support_level_for_score
@@ -13,6 +18,7 @@ from app.schemas.experiment_plan import ExperimentPlan
 from app.schemas.research_idea import ResearchIdea
 from app.schemas.scientific_task import ScientificTaskType
 from app.tools.paper_corpus import PaperCorpusIndexer
+from app.tools.paper_analyzer import PaperAnalyzer
 from app.verifier.evidence_verifier import EvidenceVerifier
 from app.verifier.experiment_verifier import ExperimentVerifier
 from app.verifier.novelty_verifier import NoveltyVerifier
@@ -62,6 +68,35 @@ class ScientificMemoryTests(unittest.TestCase):
 
             self.assertEqual(len(memory.load_recent_ideas()), 1)
             self.assertEqual(memory.search_memory("adaptive")[0]["memory_type"], "idea")
+
+    def test_duplicate_idea_is_not_appended(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            memory = ScientificMemory(directory)
+            idea = {
+                "topic": "agent memory",
+                "title": "Adaptive retrieval",
+                "method": "Route records by relevance.",
+            }
+
+            self.assertTrue(memory.save_idea(idea))
+            self.assertFalse(memory.save_idea(idea))
+            self.assertEqual(len(memory.load_recent_ideas()), 1)
+
+    def test_malformed_jsonl_warns_and_preserves_valid_records(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            memory = ScientificMemory(directory)
+            ideas_path = Path(directory) / "ideas.jsonl"
+            ideas_path.write_text(
+                '{"title": "valid idea", "method": "routing"}\n'
+                '{"title": broken}\n',
+                encoding="utf-8",
+            )
+
+            records = memory.load_recent_ideas()
+
+            self.assertEqual([record["title"] for record in records], ["valid idea"])
+            self.assertTrue(memory.warnings)
+            self.assertIn("line 2", memory.warnings[0])
 
 
 class PaperCorpusTests(unittest.TestCase):
@@ -129,6 +164,38 @@ class PaperCorpusTests(unittest.TestCase):
             self.assertEqual(evidence[0].matched_keywords, [])
             self.assertLessEqual(evidence[0].score, 0.1)
             self.assertEqual(evidence[0].support_level, "insufficient")
+
+    def test_index_cache_refreshes_only_when_needed(self) -> None:
+        class CountingCorpus(PaperCorpusIndexer):
+            def __init__(self, papers_dir) -> None:
+                super().__init__(papers_dir)
+                self.scan_count = 0
+
+            def scan_papers(self, papers_dir=None):
+                self.scan_count += 1
+                return super().scan_papers(papers_dir)
+
+        with tempfile.TemporaryDirectory() as directory:
+            corpus_path = Path(directory)
+            (corpus_path / "one.txt").write_text(
+                "LVLM hallucination mitigation uses visual evidence.",
+                encoding="utf-8",
+            )
+            corpus = CountingCorpus(corpus_path)
+
+            corpus.search("LVLM hallucination")
+            corpus.search("visual evidence")
+            self.assertEqual(corpus.scan_count, 1)
+
+            (corpus_path / "two.md").write_text(
+                "# Method\nA verifier checks grounded answers.",
+                encoding="utf-8",
+            )
+            corpus.search("grounded verifier")
+            self.assertEqual(corpus.scan_count, 2)
+
+            corpus.search("grounded verifier", force_refresh=True)
+            self.assertEqual(corpus.scan_count, 3)
 
 
 class EvidenceVerifierTests(unittest.TestCase):
@@ -313,6 +380,88 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertTrue(evidence)
             self.assertTrue(agent.paper_corpus.warnings)
             self.assertTrue(all("broken.pdf" not in item["source"] for item in evidence))
+
+
+class AgentServiceTests(unittest.TestCase):
+    def test_evidence_service_assigns_evidence_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            memory = ScientificMemory(Path(directory) / "memory")
+            service = EvidenceService(
+                Path(directory),
+                PaperCorpusIndexer(FIXTURE_PAPERS),
+                memory,
+            )
+
+            evidence = service.retrieve("LVLM hallucination", top_k=2)
+
+            self.assertTrue(evidence)
+            self.assertEqual(evidence[0]["evidence_id"], "E1")
+
+    def test_verification_pipeline_returns_all_verifier_results(self) -> None:
+        idea = ResearchIdea(
+            title="Evidence-aware validation",
+            hypothesis="Visual evidence may reduce hallucination.",
+            motivation="Ground answers in retrieved image evidence.",
+            method="Route uncertain answers through visual verification.",
+            evidence_refs=["E1"],
+        )
+        evidence_item = PaperCorpusIndexer(FIXTURE_PAPERS).search(
+            "LVLM hallucination visual evidence",
+            top_k=1,
+        )[0].to_dict()
+        evidence_item["evidence_id"] = "E1"
+
+        results = VerificationPipeline().verify(
+            idea,
+            complete_experiment_plan(),
+            [evidence_item],
+            {
+                "research_gap": "Hallucination remains under visual uncertainty.",
+                "existing_methods": ["Visual evidence verification."],
+            },
+            [],
+            [idea],
+        )
+
+        self.assertEqual(
+            set(results),
+            {"evidence", "novelty", "experiment", "reproducibility"},
+        )
+
+    def test_persistence_service_uses_memory_deduplication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            memory = ScientificMemory(directory)
+            service = PersistenceService(memory, PaperAnalyzer())
+            result = {
+                "topic": "LVLM hallucination",
+                "evidence_context": [{
+                    "kind": "local_paper",
+                    "source": "paper.txt",
+                    "evidence_id": "E1",
+                    "page": None,
+                    "section": "Method",
+                    "file_type": "txt",
+                    "chunk_id": "C1",
+                    "excerpt": "Visual evidence verifies an LVLM response.",
+                }],
+                "selected_idea": {
+                    "title": "Evidence-aware validation",
+                    "method": "Verify outputs against visual evidence.",
+                },
+                "experiment_plan": complete_experiment_plan().to_dict(),
+                "verification_passed": True,
+                "verification": {},
+            }
+
+            service.save(result)
+            service.save(result)
+
+            self.assertEqual(len(memory.load_recent_ideas()), 1)
+            paper_notes = [
+                item for item in memory.search_memory("paper.txt")
+                if item["memory_type"] == "paper_note"
+            ]
+            self.assertEqual(len(paper_notes), 1)
 
 
 if __name__ == "__main__":

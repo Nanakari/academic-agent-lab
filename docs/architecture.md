@@ -12,6 +12,10 @@ app/
     toolcall.py
     academic_agent.py
     ai_scientific_agent.py
+    services/
+      evidence_service.py
+      verification_pipeline.py
+      persistence_service.py
   planner/
     task_classifier.py
     research_planner.py
@@ -55,20 +59,29 @@ workflow components.
 `AIScientificAgent.run()` executes a bounded orchestration flow:
 
 1. `ResearchPlanner` classifies the request and creates a structured plan.
-2. `PaperCorpusIndexer` scans and chunks local papers; paper-derived memory is a
-   secondary evidence source.
+2. `EvidenceService` uses `PaperCorpusIndexer` to scan and chunk local papers;
+   paper-derived memory is a secondary evidence source. The index is cached
+   within the current process and refreshed when file metadata or chunk settings
+   change.
 3. `PaperAnalyzer` extracts methods and limitations, preferring detected
    section metadata.
 4. `ResearchIdeaGenerator` creates and ranks three candidate ideas.
 5. `ExperimentDesigner` creates datasets, baselines, metrics, ablations,
    expected results, risks, and reproducibility notes.
-6. Four verifiers inspect evidence, novelty, experiment completeness, and
-   reproducibility.
+6. `VerificationPipeline` runs four verifiers for evidence, novelty, experiment
+   completeness, and reproducibility.
 7. One bounded revision is allowed when verification fails.
-8. ScientificMemory records the run and ReportWriter emits JSON and Markdown.
+8. `PersistenceService` writes deduplicated paper notes and ideas plus experiment
+   and verification records to ScientificMemory; ReportWriter emits JSON and
+   Markdown.
 
 This flow is intentionally explicit rather than hidden inside an LLM prompt.
 Each stage can be tested or replaced independently.
+
+The services layer is deliberately small: it extracts retrieval, verifier
+coordination, and persistence from the orchestrator without introducing
+framework abstractions. ScientificMemory remains a local JSONL store, not a
+production database.
 
 ## Runtime Data
 
