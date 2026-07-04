@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.agent.base import BaseAgent
 from app.agent.services import (
+    AgentDecisionPolicy,
     EvidenceService,
     LiteratureAnalysisService,
     PersistenceService,
@@ -62,6 +63,7 @@ class AIScientificAgent(BaseAgent):
         self.idea_generator = ResearchIdeaGenerator(llm=llm)
         self.experiment_designer = ExperimentDesigner()
         self.report_writer = ReportWriter()
+        self.decision_policy = AgentDecisionPolicy()
         self.literature_analysis_service = LiteratureAnalysisService(
             self.paper_analyzer
         )
@@ -94,6 +96,7 @@ class AIScientificAgent(BaseAgent):
         self.state = AgentState.RUNNING
         self.current_step = 0
         self.memory.add_user_message(user_query)
+        agent_trace = []
         try:
             task_type = self.planner.classify_task(user_query)
             plan = self.planner.create_plan(user_query, task_type)
@@ -103,6 +106,14 @@ class AIScientificAgent(BaseAgent):
             self.current_step = 2
             literature_analysis = self._analyze_evidence(evidence_context)
             self.current_step = 3
+            agent_trace.append(
+                self.decision_policy.decide_after_evidence(
+                    step=1,
+                    topic=user_query.strip(),
+                    evidence_context=evidence_context,
+                    literature_analysis=literature_analysis,
+                )
+            )
 
             ideas = self.idea_generator.generate_ideas(user_query.strip(), evidence_context)
             selected_idea = ideas[0]
@@ -141,11 +152,29 @@ class AIScientificAgent(BaseAgent):
                     topic=user_query,
                 )
             self.current_step = 6
+            agent_trace.append(
+                self.decision_policy.decide_after_verification(
+                    step=2,
+                    verification=verification,
+                    revision_performed=revision_performed,
+                )
+            )
 
             evidence_assessment = self.verification_pipeline.build_evidence_assessment(
                 evidence_context,
                 verification["evidence"],
                 literature_analysis,
+            )
+            verification_passed = all(
+                item["passed"] for item in verification.values()
+            )
+            agent_trace.append(
+                self.decision_policy.decide_before_report(
+                    step=3,
+                    evidence_status=evidence_assessment["status"],
+                    verification_passed=verification_passed,
+                    selected_idea=selected_idea.to_dict(),
+                )
             )
             result = {
                 "agent": self.name,
@@ -163,10 +192,9 @@ class AIScientificAgent(BaseAgent):
                 "selected_idea": selected_idea.to_dict(),
                 "experiment_plan": experiment_plan.to_dict(),
                 "verification": verification,
-                "verification_passed": all(
-                    item["passed"] for item in verification.values()
-                ),
+                "verification_passed": verification_passed,
                 "revision_performed": revision_performed,
+                "agent_trace": [entry.to_dict() for entry in agent_trace],
                 "output_paths": {
                     "json": str((self.output_dir / "result.json").resolve()),
                     "markdown": str((self.output_dir / "report.md").resolve()),

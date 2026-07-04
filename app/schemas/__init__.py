@@ -1,5 +1,6 @@
 """Structured data models for the AI Scientific Agent."""
 
+from app.schemas.agent_trace import AgentTraceEntry
 from app.schemas.evidence import (
     EvidenceChunk,
     PaperChunk,
@@ -13,6 +14,7 @@ from app.schemas.scientific_task import ScientificTaskType
 from app.schemas.verification_result import VerificationResult
 
 __all__ = [
+    "AgentTraceEntry",
     "ExperimentPlan",
     "EvidenceChunk",
     "EvalCase",

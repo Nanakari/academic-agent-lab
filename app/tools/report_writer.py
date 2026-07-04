@@ -169,6 +169,20 @@ class ReportWriter:
                 f"  - Warning: {warning}"
                 for warning in verification.get("warnings", [])
             )
+        agent_trace = result.get("agent_trace")
+        if agent_trace:
+            lines.extend(["", "## Agent Decision Trace", ""])
+            for entry in agent_trace:
+                lines.extend([
+                    f"### Step {entry['step']}",
+                    "",
+                    f"- Observation: {entry['observation']}",
+                    f"- Decision: {entry['decision']}",
+                    f"- Action: {entry['action']}",
+                    f"- Reason: {entry['reason']}",
+                    f"- Result: {entry.get('result') or 'Not recorded.'}",
+                    "",
+                ])
         lines.extend([
             "",
             f"Revision performed: **{result['revision_performed']}**",

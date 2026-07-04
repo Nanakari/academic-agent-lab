@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.agent.ai_scientific_agent import AIScientificAgent
 from app.agent.services import (
+    AgentDecisionPolicy,
     EvidenceService,
     LiteratureAnalysisService,
     PersistenceService,
@@ -15,6 +16,7 @@ from app.agent.services import (
 from app.memory.scientific_memory import ScientificMemory
 from app.planner.research_planner import ResearchPlanner
 from app.schemas.evidence import EvidenceChunk, support_level_for_score
+from app.schemas.agent_trace import AgentTraceEntry
 from app.schemas.experiment_plan import ExperimentPlan
 from app.schemas.research_idea import ResearchIdea
 from app.schemas.scientific_task import ScientificTaskType
@@ -484,6 +486,10 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertIn("evidence_used", result)
             self.assertIn("evidence_gaps", result)
             self.assertIn("unsupported_claims", result)
+            self.assertIn("agent_trace", result)
+            self.assertGreaterEqual(len(result["agent_trace"]), 3)
+            for field in ("observation", "decision", "reason", "action"):
+                self.assertIn(field, result["agent_trace"][0])
             self.assertTrue((output_dir / "result.json").exists())
             self.assertTrue((output_dir / "report.md").exists())
             saved = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
@@ -494,6 +500,11 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertIn("## Unsupported Claims", report)
             self.assertIn("Support Level", report)
             self.assertIn("Matched Keywords", report)
+            self.assertIn("## Agent Decision Trace", report)
+            self.assertIn("Observation:", report)
+            self.assertIn("Decision:", report)
+            self.assertIn("Action:", report)
+            self.assertIn("Reason:", report)
 
     def test_unreadable_pdf_does_not_abort_local_evidence_scan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -512,6 +523,91 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertTrue(evidence)
             self.assertTrue(agent.paper_corpus.warnings)
             self.assertTrue(all("broken.pdf" not in item["source"] for item in evidence))
+
+
+class AgentDecisionPolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.policy = AgentDecisionPolicy()
+
+    def test_trace_entry_serializes_all_stable_fields(self) -> None:
+        entry = AgentTraceEntry(
+            step=1,
+            observation="Local evidence was inspected.",
+            decision="continue_grounded_planning",
+            reason="A concrete limitation was found.",
+            action="generate_candidate_ideas",
+            result="Planning continued.",
+        )
+
+        self.assertEqual(
+            set(entry.to_dict()),
+            {"step", "observation", "decision", "reason", "action", "result"},
+        )
+
+    def test_no_evidence_marks_insufficient_evidence(self) -> None:
+        entry = self.policy.decide_after_evidence(
+            step=1,
+            topic="agent memory",
+            evidence_context=[],
+            literature_analysis={},
+        )
+
+        self.assertEqual(entry.decision, "mark_insufficient_evidence")
+
+    def test_missing_research_gap_downgrades_confidence(self) -> None:
+        entry = self.policy.decide_after_evidence(
+            step=1,
+            topic="agent memory",
+            evidence_context=[{"evidence_id": "E1"}],
+            literature_analysis={"research_gap_status": "insufficient_evidence"},
+        )
+
+        self.assertEqual(entry.decision, "downgrade_gap_confidence")
+
+    def test_all_verifiers_pass_accepts_current_plan(self) -> None:
+        verification = {
+            name: {"passed": True, "issues": []}
+            for name in ("evidence", "novelty", "experiment", "reproducibility")
+        }
+
+        entry = self.policy.decide_after_verification(
+            step=2,
+            verification=verification,
+            revision_performed=False,
+        )
+
+        self.assertEqual(entry.decision, "accept_current_plan")
+
+    def test_evidence_failure_is_explained_and_preserved(self) -> None:
+        verification = {
+            "evidence": {"passed": False, "issues": ["No local support."]},
+            "novelty": {"passed": True, "issues": []},
+            "experiment": {"passed": True, "issues": []},
+            "reproducibility": {"passed": True, "issues": []},
+        }
+
+        entry = self.policy.decide_after_verification(
+            step=2,
+            verification=verification,
+            revision_performed=True,
+        )
+
+        self.assertEqual(entry.decision, "revise_or_mark_evidence_gap")
+        self.assertIn("evidence verifier failed", entry.reason)
+        self.assertIn("failure is preserved", entry.result)
+
+    def test_insufficient_final_evidence_uses_cautious_report(self) -> None:
+        entry = self.policy.decide_before_report(
+            step=3,
+            evidence_status="evidence_insufficient",
+            verification_passed=False,
+            selected_idea={"title": "Exploratory agent memory"},
+        )
+
+        self.assertEqual(
+            entry.decision,
+            "report_as_exploratory_or_insufficient",
+        )
 
 
 class AgentServiceTests(unittest.TestCase):

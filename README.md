@@ -25,6 +25,13 @@ The scientific mode is an incremental extension rather than a replacement.
 
 Python 3.11 or newer is required.
 
+The project is a bounded AI Scientific Agent and offline-first
+pre-experiment planning assistant. Its verifier-driven decision policy records
+observations, decisions, actions, reasons, and outcomes in `agent_trace`. This
+is a bounded rule-based trace, not open-ended autonomous discovery: the system
+does not run real experiments or prove scientific hypotheses. Failed verifier
+results are preserved and reported instead of being silently corrected.
+
 ## Architecture
 
 ```text
