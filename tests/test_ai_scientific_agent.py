@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 from app.agent.ai_scientific_agent import AIScientificAgent
 from app.agent.services import (
@@ -487,7 +488,12 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertIn("evidence_gaps", result)
             self.assertIn("unsupported_claims", result)
             self.assertIn("agent_trace", result)
-            self.assertGreaterEqual(len(result["agent_trace"]), 3)
+            self.assertGreaterEqual(len(result["agent_trace"]), 4)
+            decisions = [entry["decision"] for entry in result["agent_trace"]]
+            self.assertTrue(
+                "skip_revision" in decisions
+                or "trigger_bounded_revision" in decisions
+            )
             for field in ("observation", "decision", "reason", "action"):
                 self.assertIn(field, result["agent_trace"][0])
             self.assertTrue((output_dir / "result.json").exists())
@@ -523,6 +529,55 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertTrue(evidence)
             self.assertTrue(agent.paper_corpus.warnings)
             self.assertTrue(all("broken.pdf" not in item["source"] for item in evidence))
+
+    def test_revision_trigger_reason_survives_when_reverification_passes(self) -> None:
+        verification_template = {
+            "score": 1.0,
+            "issues": [],
+            "suggestions": [],
+            "supported_claims": [],
+            "unsupported_claims": [],
+            "evidence_used": [],
+            "support_level": "strong",
+            "domain_consistency": {},
+            "warnings": [],
+        }
+        initial = {
+            name: {**verification_template, "passed": name != "novelty"}
+            for name in ("evidence", "novelty", "experiment", "reproducibility")
+        }
+        initial["novelty"]["issues"] = ["Idea overlaps with memory."]
+        final = {
+            name: {**verification_template, "passed": True}
+            for name in ("evidence", "novelty", "experiment", "reproducibility")
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = AIScientificAgent(
+                project_root=root,
+                output_dir=root / "outputs",
+                papers_dir=FIXTURE_PAPERS,
+                memory=ScientificMemory(root / "memory"),
+            )
+            agent.verification_pipeline.verify = Mock(
+                side_effect=[initial, final]
+            )
+
+            result = agent.run("LVLM hallucination mitigation")
+
+        self.assertTrue(result["revision_performed"])
+        self.assertTrue(result["verification_passed"])
+        self.assertEqual(
+            result["agent_trace"][1]["decision"],
+            "trigger_bounded_revision",
+        )
+        self.assertIn("novelty verifier failed", result["agent_trace"][1]["reason"])
+        self.assertIn("novelty", result["agent_trace"][1]["observation"])
+        self.assertEqual(
+            result["agent_trace"][2]["decision"],
+            "accept_current_plan",
+        )
 
 
 class AgentDecisionPolicyTests(unittest.TestCase):
@@ -577,6 +632,81 @@ class AgentDecisionPolicyTests(unittest.TestCase):
         )
 
         self.assertEqual(entry.decision, "accept_current_plan")
+
+    def test_before_revision_skips_when_all_verifiers_pass(self) -> None:
+        verification = {
+            name: {"passed": True, "issues": []}
+            for name in ("evidence", "novelty", "experiment", "reproducibility")
+        }
+
+        entry = self.policy.decide_before_revision(
+            step=2,
+            verification=verification,
+        )
+
+        self.assertEqual(entry.decision, "skip_revision")
+        self.assertEqual(entry.action, "continue_to_final_assessment")
+
+    def test_before_revision_records_all_failures_and_prioritizes_evidence(
+        self,
+    ) -> None:
+        verification = {
+            "evidence": {"passed": False, "issues": ["No grounded support."]},
+            "experiment": {"passed": False, "issues": ["Missing baselines."]},
+            "novelty": {"passed": True, "issues": []},
+            "reproducibility": {"passed": True, "issues": []},
+        }
+
+        entry = self.policy.decide_before_revision(
+            step=2,
+            verification=verification,
+        )
+
+        self.assertEqual(entry.decision, "trigger_bounded_revision")
+        self.assertEqual(entry.action, "perform_bounded_revision")
+        self.assertIn("evidence verifier failed", entry.reason)
+        self.assertIn("evidence, experiment", entry.observation)
+        self.assertIn("Primary trigger: evidence", entry.observation)
+
+    def test_before_revision_targets_experiment_failure(self) -> None:
+        verification = {
+            "evidence": {"passed": True, "issues": []},
+            "experiment": {
+                "passed": False,
+                "issues": ["Missing baselines and metrics."],
+            },
+            "novelty": {"passed": True, "issues": []},
+            "reproducibility": {"passed": True, "issues": []},
+        }
+
+        entry = self.policy.decide_before_revision(
+            step=2,
+            verification=verification,
+        )
+
+        self.assertEqual(entry.decision, "trigger_bounded_revision")
+        self.assertIn("baseline, metric", entry.reason)
+        self.assertIn("experiment-plan completeness", entry.result)
+
+    def test_before_revision_targets_novelty_failure(self) -> None:
+        verification = {
+            "evidence": {"passed": True, "issues": []},
+            "experiment": {"passed": True, "issues": []},
+            "novelty": {
+                "passed": False,
+                "issues": ["Idea overlaps with memory."],
+            },
+            "reproducibility": {"passed": True, "issues": []},
+        }
+
+        entry = self.policy.decide_before_revision(
+            step=2,
+            verification=verification,
+        )
+
+        self.assertEqual(entry.decision, "trigger_bounded_revision")
+        self.assertIn("novelty verifier failed", entry.reason)
+        self.assertIn("idea differentiation", entry.result)
 
     def test_evidence_failure_is_explained_and_preserved(self) -> None:
         verification = {

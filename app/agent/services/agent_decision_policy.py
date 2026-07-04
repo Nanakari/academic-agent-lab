@@ -8,6 +8,13 @@ from app.schemas.agent_trace import AgentTraceEntry
 class AgentDecisionPolicy:
     """Describe verifier-driven decisions without changing workflow state."""
 
+    _REVISION_PRIORITY = (
+        "evidence",
+        "experiment",
+        "reproducibility",
+        "novelty",
+    )
+
     def decide_after_evidence(
         self,
         *,
@@ -60,6 +67,50 @@ class AgentDecisionPolicy:
             reason="Local evidence is sufficient for bounded pre-experiment planning.",
             action="generate_candidate_ideas",
             result="Proceeding to idea generation and experiment planning.",
+        )
+
+    def decide_before_revision(
+        self,
+        *,
+        step: int,
+        verification: dict,
+    ) -> AgentTraceEntry:
+        """Record whether the first verifier pass warrants one revision."""
+        failures = self._failed_verifiers(verification)
+        if not failures:
+            return AgentTraceEntry(
+                step=step,
+                observation="All verifier checks passed before revision.",
+                decision="skip_revision",
+                reason=(
+                    "No verifier failure was detected, so bounded revision is "
+                    "not needed."
+                ),
+                action="continue_to_final_assessment",
+                result=(
+                    "The agent will continue to final evidence assessment "
+                    "without revision."
+                ),
+            )
+
+        primary = self._primary_failure(failures)
+        failed_names = ", ".join(failures)
+        observation = (
+            f"Verifier checks failed before revision: {failed_names}. "
+            f"Primary trigger: {primary}. "
+            f"Failure details: {self._failure_details(failures, verification)}"
+        )
+        return AgentTraceEntry(
+            step=step,
+            observation=observation,
+            decision="trigger_bounded_revision",
+            reason=self._revision_reason(primary, verification[primary]),
+            action="perform_bounded_revision",
+            result=(
+                "The agent will perform at most one bounded revision. "
+                f"The primary verifier concern is {self._revision_target(primary)}; "
+                "any remaining failure will be preserved in the final report."
+            ),
         )
 
     def decide_after_verification(
@@ -196,6 +247,68 @@ class AgentDecisionPolicy:
         issues = result.get("issues", [])
         detail = "; ".join(issues) if issues else "No issue detail was provided."
         return f"The {name} verifier failed: {detail}"
+
+    @staticmethod
+    def _failed_verifiers(verification: dict) -> list[str]:
+        return [
+            name
+            for name, result in verification.items()
+            if not result.get("passed", False)
+        ]
+
+    @classmethod
+    def _primary_failure(cls, failures: list[str]) -> str:
+        for name in cls._REVISION_PRIORITY:
+            if name in failures:
+                return name
+        return failures[0]
+
+    @staticmethod
+    def _failure_details(failures: list[str], verification: dict) -> str:
+        details = []
+        for name in failures:
+            issues = verification[name].get("issues", [])
+            issue_text = "; ".join(issues) if issues else "No issue detail provided."
+            details.append(f"{name}: {issue_text}")
+        return " | ".join(details)
+
+    def _revision_reason(self, primary: str, result: dict) -> str:
+        if primary == "evidence":
+            return (
+                "The evidence verifier failed, so the bounded revision should "
+                "improve evidence grounding without claiming unsupported results."
+            )
+        if primary == "experiment":
+            missing = self._missing_experiment_details(result)
+            return (
+                f"The experiment plan has missing or incomplete {missing}, so "
+                "it is the primary bounded revision target."
+            )
+        if primary == "reproducibility":
+            return (
+                "The reproducibility verifier failed, so seed, dependency "
+                "version, environment, logging, or execution notes need attention."
+            )
+        if primary == "novelty":
+            return (
+                "The novelty verifier failed because the current idea overlaps "
+                "with saved or candidate ideas, so the revision should reduce "
+                "duplication."
+            )
+        return (
+            f"An unclassified verifier failure ({primary}) was detected and "
+            "must remain visible through bounded revision and reporting."
+        )
+
+    @staticmethod
+    def _revision_target(primary: str) -> str:
+        targets = {
+            "evidence": "evidence grounding",
+            "experiment": "experiment-plan completeness",
+            "reproducibility": "reproducibility notes",
+            "novelty": "idea differentiation",
+        }
+        return targets.get(primary, f"the {primary} verifier failure")
 
     @staticmethod
     def _missing_experiment_details(result: dict) -> str:

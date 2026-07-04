@@ -124,7 +124,7 @@ class AIScientificAgent(BaseAgent):
             self.current_step = 4
 
             history = self.scientific_memory.load_recent_ideas(limit=50)
-            verification = self.verification_pipeline.verify(
+            initial_verification = self.verification_pipeline.verify(
                 selected_idea,
                 experiment_plan,
                 evidence_context,
@@ -135,13 +135,25 @@ class AIScientificAgent(BaseAgent):
             )
             self.current_step = 5
 
-            revision_performed = not all(item["passed"] for item in verification.values())
-            if revision_performed:
+            revision_needed = not all(
+                item["passed"] for item in initial_verification.values()
+            )
+            agent_trace.append(
+                self.decision_policy.decide_before_revision(
+                    step=2,
+                    verification=initial_verification,
+                )
+            )
+
+            verification = initial_verification
+            revision_performed = False
+            if revision_needed:
                 selected_idea, experiment_plan = self._revise_once(
                     selected_idea,
                     experiment_plan,
                     evidence_context,
                 )
+                revision_performed = True
                 verification = self.verification_pipeline.verify(
                     selected_idea,
                     experiment_plan,
@@ -154,7 +166,7 @@ class AIScientificAgent(BaseAgent):
             self.current_step = 6
             agent_trace.append(
                 self.decision_policy.decide_after_verification(
-                    step=2,
+                    step=3,
                     verification=verification,
                     revision_performed=revision_performed,
                 )
@@ -170,7 +182,7 @@ class AIScientificAgent(BaseAgent):
             )
             agent_trace.append(
                 self.decision_policy.decide_before_report(
-                    step=3,
+                    step=4,
                     evidence_status=evidence_assessment["status"],
                     verification_passed=verification_passed,
                     selected_idea=selected_idea.to_dict(),

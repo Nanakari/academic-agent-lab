@@ -31,6 +31,8 @@ observations, decisions, actions, reasons, and outcomes in `agent_trace`. This
 is a bounded rule-based trace, not open-ended autonomous discovery: the system
 does not run real experiments or prove scientific hypotheses. Failed verifier
 results are preserved and reported instead of being silently corrected.
+The trace also records whether the agent skipped or triggered a bounded
+revision after the first verifier pass.
 
 ## Architecture
 
