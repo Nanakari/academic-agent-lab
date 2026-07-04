@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.tools.paper_corpus import keyword_tokens
+
 
 class RealPaperValidationReportWriter:
     """Write a compact showcase summary from agent and evaluation results."""
@@ -31,6 +33,37 @@ class RealPaperValidationReportWriter:
         experiment = agent_result.get("experiment_plan", {})
         unsupported = agent_result.get("unsupported_claims", [])
         gaps = agent_result.get("evidence_gaps", [])
+        support_distribution = {
+            level: sum(
+                item.get("support_level") == level for item in evidence
+            )
+            for level in ("strong", "moderate", "weak", "insufficient")
+        }
+        expected_keywords = keyword_tokens(topic)
+        evidence_keywords = keyword_tokens(
+            " ".join(
+                f"{' '.join(item.get('matched_keywords', []))} "
+                f"{item.get('text', '')}"
+                for item in evidence
+            )
+        )
+        covered_keywords = sorted(expected_keywords & evidence_keywords)
+        missing_keywords = sorted(expected_keywords - evidence_keywords)
+        evidence_verification = (
+            agent_result.get("verification", {}).get("evidence", {})
+        )
+        domain_consistency = evidence_verification.get("domain_consistency", {})
+        strongest_score = float((strongest or {}).get("score", 0.0))
+        coverage_warning = (
+            len(evidence) < 5
+            or (
+                not evidence_verification.get("passed", False)
+                and strongest_score >= 0.6
+            )
+        )
+        weak_only_warning = bool(evidence) and all(
+            item.get("support_level") == "weak" for item in evidence
+        )
 
         lines = [
             "# Real Paper Validation Summary",
@@ -58,6 +91,32 @@ class RealPaperValidationReportWriter:
             f"- Weak or unsupported claims: {self._join(unsupported)}",
             f"- Evidence gaps: {self._join(gaps)}",
             "",
+            "### Evidence support distribution",
+            "",
+            f"- strong: {support_distribution['strong']}",
+            f"- moderate: {support_distribution['moderate']}",
+            f"- weak: {support_distribution['weak']}",
+            f"- insufficient: {support_distribution['insufficient']}",
+            "",
+            "### Topic keyword coverage",
+            "",
+            f"- Expected keywords: {self._join(sorted(expected_keywords))}",
+            f"- Covered keywords: {self._join(covered_keywords)}",
+            f"- Missing keywords: {self._join(missing_keywords)}",
+            "",
+            "### Strongest evidence detail",
+            "",
+            self._strongest_evidence_detail(strongest),
+            "",
+            "### Domain consistency",
+            "",
+            f"- Passed: {domain_consistency.get('passed', 'Not enabled')}",
+            (
+                "- Matched topic concepts: "
+                f"{self._join(domain_consistency.get('matched_topic_concepts'))}"
+            ),
+            f"- Issues: {self._join(domain_consistency.get('issues'))}",
+            "",
             "## Evaluation Summary",
             "",
             f"- Keyword hit rate: {float(metrics.get('keyword_hit_rate', 0.0)):.3f}",
@@ -80,8 +139,17 @@ class RealPaperValidationReportWriter:
                 "- Retrieval currently uses lightweight keyword overlap; "
                 "it is not a complete literature review."
             ),
-            "",
         ]
+        if coverage_warning:
+            lines.append(
+                "- Evidence coverage may be incomplete; consider increasing top_k "
+                "or adding more papers."
+            )
+        if weak_only_warning:
+            lines.append(
+                "- All retrieved evidence is weak; treat the result as exploratory."
+            )
+        lines.append("")
         path.write_text("\n".join(lines), encoding="utf-8")
         return path
 
@@ -103,3 +171,19 @@ class RealPaperValidationReportWriter:
             f"chunk {evidence.get('chunk_id', 'N/A')} / "
             f"score {float(evidence.get('score', 0.0)):.3f}"
         )
+
+    @classmethod
+    def _strongest_evidence_detail(cls, evidence: dict | None) -> str:
+        if not evidence:
+            return "- None"
+        return "\n".join([
+            f"- Title: {evidence.get('title', 'Unknown paper')}",
+            f"- Section: {evidence.get('section') or 'N/A'}",
+            f"- Chunk: {evidence.get('chunk_id', 'N/A')}",
+            f"- Score: {float(evidence.get('score', 0.0)):.3f}",
+            f"- Support level: {evidence.get('support_level', 'unknown')}",
+            (
+                "- Matched keywords: "
+                f"{cls._join(evidence.get('matched_keywords'))}"
+            ),
+        ])

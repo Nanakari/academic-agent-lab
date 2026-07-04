@@ -87,6 +87,7 @@ def run_real_paper_validation(
             output_dir=output_path,
             top_k=top_k,
             memory=ScientificMemory(Path(temp) / "memory"),
+            strict_domain=True,
         )
         agent_result = agent.run(topic)
 

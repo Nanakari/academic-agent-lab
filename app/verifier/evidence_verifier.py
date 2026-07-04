@@ -8,6 +8,7 @@ from app.schemas.evidence import support_level_for_score
 from app.schemas.research_idea import ResearchIdea
 from app.schemas.verification_result import VerificationResult
 from app.tools.paper_corpus import infer_supporting_claim, keyword_tokens
+from app.verifier.topic_consistency import domain_consistency_score
 
 
 class EvidenceVerifier:
@@ -22,8 +23,13 @@ class EvidenceVerifier:
         "证据不足",
     )
 
-    def __init__(self, minimum_evidence_score: float = 0.15) -> None:
+    def __init__(
+        self,
+        minimum_evidence_score: float = 0.15,
+        strict_domain: bool = False,
+    ) -> None:
         self.minimum_evidence_score = minimum_evidence_score
+        self.strict_domain = strict_domain
 
     def verify(
         self,
@@ -31,6 +37,7 @@ class EvidenceVerifier:
         evidence_context: list[dict],
         claims: list[str] | None = None,
         ideas: list[ResearchIdea] | None = None,
+        topic: str | None = None,
     ) -> VerificationResult:
         issues: list[str] = []
         suggestions: list[str] = []
@@ -41,6 +48,7 @@ class EvidenceVerifier:
         evidence_ids = {
             item.get("evidence_id") for item in evidence_context if item.get("evidence_id")
         }
+        domain_consistency = {}
 
         if not evidence_context:
             issues.append("no evidence found in the local paper corpus or scientific memory.")
@@ -54,6 +62,20 @@ class EvidenceVerifier:
                 )
                 suggestions.append(
                     "Add papers whose terminology more directly matches the research topic."
+                )
+
+        if self.strict_domain and topic:
+            domain_consistency = domain_consistency_score(topic, evidence_context)
+            if not domain_consistency["passed"]:
+                reason = "; ".join(domain_consistency["issues"])
+                issues.append(
+                    f"topic-domain consistency check failed: {reason}"
+                )
+                unsupported_claims.append(
+                    "No retrieved evidence matched topic-critical concepts."
+                )
+                suggestions.append(
+                    "Add papers containing the topic's specific concept combinations."
                 )
 
         checked_ideas = self._unique_ideas(ideas or [idea])
@@ -124,6 +146,7 @@ class EvidenceVerifier:
             unsupported_claims=unsupported_claims,
             evidence_used=self._deduplicate_citations(evidence_used),
             support_level=support_level_for_score(score),
+            domain_consistency=domain_consistency,
         )
 
     @classmethod

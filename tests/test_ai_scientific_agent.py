@@ -23,6 +23,11 @@ from app.verifier.evidence_verifier import EvidenceVerifier
 from app.verifier.experiment_verifier import ExperimentVerifier
 from app.verifier.novelty_verifier import NoveltyVerifier
 from app.verifier.reproducibility_verifier import ReproducibilityVerifier
+from app.verifier.claim_filter import is_verifiable_claim
+from app.verifier.topic_consistency import (
+    domain_consistency_score,
+    evidence_matches_concept,
+)
 
 
 FIXTURE_PAPERS = Path(__file__).parent / "fixtures" / "papers"
@@ -213,6 +218,39 @@ class EvidenceVerifierTests(unittest.TestCase):
         self.assertEqual(result.support_level, "insufficient")
         self.assertTrue(any("no evidence found" in issue for issue in result.issues))
         self.assertTrue(result.unsupported_claims)
+
+    def test_strict_domain_rejects_scattered_negative_topic_terms(self) -> None:
+        idea = ResearchIdea(
+            title="Graph traffic forecasting",
+            hypothesis="A graph model predicts traffic.",
+            motivation="Improve forecasts.",
+            method="Use graph message passing.",
+            evidence_refs=["E1"],
+        )
+        evidence = [{
+            "evidence_id": "E1",
+            "title": "Autonomous Driving Agents",
+            "text": (
+                "Autonomous driving agents operate in networked traffic "
+                "environments and predict actions."
+            ),
+            "score": 0.4,
+        }]
+
+        result = EvidenceVerifier(strict_domain=True).verify(
+            idea,
+            evidence,
+            ideas=[idea],
+            topic="graph neural network traffic prediction",
+        )
+
+        self.assertFalse(result.passed)
+        self.assertTrue(
+            any(
+                "topic-domain consistency check failed" in issue
+                for issue in result.issues
+            )
+        )
 
     def test_support_level_thresholds(self) -> None:
         cases = [
@@ -462,6 +500,122 @@ class AgentServiceTests(unittest.TestCase):
                 if item["memory_type"] == "paper_note"
             ]
             self.assertEqual(len(paper_notes), 1)
+
+
+class ClaimFilteringAndDomainConsistencyTests(unittest.TestCase):
+    def test_diagnostic_markers_are_not_verifiable_claims(self) -> None:
+        self.assertFalse(
+            is_verifiable_claim("Not explicitly stated in the local evidence")
+        )
+        self.assertFalse(
+            is_verifiable_claim(
+                "A defensible research gap cannot be established from the "
+                "retrieved evidence."
+            )
+        )
+        self.assertTrue(
+            is_verifiable_claim(
+                "Hierarchical planning reduces cascading failures in LLM agents."
+            )
+        )
+
+    def test_pipeline_filters_insufficient_research_gap(self) -> None:
+        idea = ResearchIdea(
+            title="Planning error tracing",
+            hypothesis="Tracing planning errors may reduce agent failures.",
+            motivation="LLM agent failures propagate across planning steps.",
+            method="Trace and verify each planning transition.",
+            evidence_refs=["E1"],
+        )
+        evidence = [{
+            "evidence_id": "E1",
+            "paper_id": "paper",
+            "title": "LLM agent planning failures",
+            "source_path": "paper.txt",
+            "file_type": "txt",
+            "page": None,
+            "section": "Results",
+            "chunk_id": "C1",
+            "text": (
+                "LLM agents fail when planning errors propagate. Planning "
+                "transition verification identifies cascading failures."
+            ),
+            "score": 0.8,
+            "matched_keywords": ["agent", "llm", "planning"],
+            "supporting_claim": "LLM agents fail when planning errors propagate.",
+            "support_level": "strong",
+        }]
+        analysis = {
+            "research_gap": (
+                "A defensible research gap cannot be established from the "
+                "retrieved evidence."
+            ),
+            "research_gap_status": "insufficient_evidence",
+            "existing_methods": [
+                "LLM agents fail when planning errors propagate."
+            ],
+        }
+
+        pipeline = VerificationPipeline()
+        verification = pipeline.verify(
+            idea,
+            complete_experiment_plan(),
+            evidence,
+            analysis,
+            [],
+            [idea],
+            topic="LLM agent planning failure",
+        )
+        assessment = pipeline.build_evidence_assessment(
+            [{**evidence[0], "kind": "local_paper"}],
+            verification["evidence"],
+            analysis,
+        )
+
+        self.assertFalse(
+            any(
+                "A defensible research gap cannot" in claim
+                for claim in verification["evidence"]["unsupported_claims"]
+            )
+        )
+        self.assertIn(
+            "Research gap could not be established from retrieved evidence.",
+            assessment["gaps"],
+        )
+
+    def test_topic_domain_consistency_negative_and_positive_cases(self) -> None:
+        negative = evidence_matches_concept(
+            (
+                "Autonomous driving agents operate in networked traffic "
+                "environments and predict actions."
+            ),
+            "Autonomous Driving",
+            "graph neural network traffic prediction",
+        )
+        llm_positive = domain_consistency_score(
+            "LLM agent planning failure and hallucination mitigation",
+            [{
+                "evidence_id": "E1",
+                "text": (
+                    "LLM-based web agents fail when planning logic is affected "
+                    "by hallucination, causing error propagation."
+                ),
+            }],
+        )
+        agentic_positive = domain_consistency_score(
+            "agentic AI reliability and hallucination in action",
+            [{
+                "evidence_id": "E2",
+                "text": (
+                    "Agentic AI systems face hallucination in action when "
+                    "executing tool calls."
+                ),
+            }],
+        )
+
+        self.assertFalse(negative["domain_consistent"])
+        self.assertTrue(llm_positive["passed"])
+        self.assertTrue(agentic_positive["passed"])
 
 
 if __name__ == "__main__":

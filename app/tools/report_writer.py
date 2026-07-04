@@ -117,6 +117,12 @@ class ReportWriter:
             *[f"- {value}" for value in analysis["key_limitations"]],
             "",
             f"### Research gap\n\n{analysis['research_gap']}",
+            f"\nStatus: `{analysis.get('research_gap_status', 'not_recorded')}`",
+            (
+                f"\nNote: {analysis['research_gap_note']}"
+                if analysis.get("research_gap_note")
+                else ""
+            ),
             "",
             "## Candidate ideas",
             "",

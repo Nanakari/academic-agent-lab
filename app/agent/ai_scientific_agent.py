@@ -18,6 +18,7 @@ from app.tools.paper_analyzer import PaperAnalyzer
 from app.tools.paper_corpus import PaperCorpusIndexer
 from app.tools.report_writer import ReportWriter
 from app.tools.research_idea_generator import ResearchIdeaGenerator
+from app.verifier.claim_filter import is_verifiable_claim
 
 
 class AIScientificAgent(BaseAgent):
@@ -31,6 +32,7 @@ class AIScientificAgent(BaseAgent):
         top_k: int = 5,
         memory: ScientificMemory | None = None,
         llm=None,
+        strict_domain: bool = False,
     ) -> None:
         super().__init__(name="AIScientificAgent", max_steps=8)
         self.project_root = (
@@ -64,7 +66,9 @@ class AIScientificAgent(BaseAgent):
             self.paper_corpus,
             self.scientific_memory,
         )
-        self.verification_pipeline = VerificationPipeline()
+        self.verification_pipeline = VerificationPipeline(
+            strict_domain=strict_domain,
+        )
         self.persistence_service = PersistenceService(
             self.scientific_memory,
             self.paper_analyzer,
@@ -111,6 +115,7 @@ class AIScientificAgent(BaseAgent):
                 literature_analysis,
                 history,
                 ideas,
+                topic=user_query,
             )
             self.current_step = 5
 
@@ -128,12 +133,14 @@ class AIScientificAgent(BaseAgent):
                     literature_analysis,
                     history,
                     ideas,
+                    topic=user_query,
                 )
             self.current_step = 6
 
             evidence_assessment = self.verification_pipeline.build_evidence_assessment(
                 evidence_context,
                 verification["evidence"],
+                literature_analysis,
             )
             result = {
                 "agent": self.name,
@@ -188,6 +195,10 @@ class AIScientificAgent(BaseAgent):
                     "A defensible gap cannot yet be established from local papers; "
                     "the generated ideas must be treated as exploratory."
                 ),
+                "research_gap_status": "insufficient_evidence",
+                "research_gap_note": (
+                    "Retrieved evidence did not explicitly state a concrete limitation."
+                ),
             }
         combined = "\n".join(item["excerpt"] for item in evidence_context)
         extracted = self.paper_analyzer.extract_problem_method_experiment_limitation(combined)
@@ -201,6 +212,19 @@ class AIScientificAgent(BaseAgent):
         )
         existing_methods = method_sections or extracted["method"]
         limitations = limitation_sections or extracted["limitation"]
+        if not limitations or not is_verifiable_claim(limitations[0]):
+            return {
+                "existing_methods": existing_methods,
+                "key_limitations": limitations,
+                "research_gap": (
+                    "A defensible research gap cannot be established from the "
+                    "retrieved evidence."
+                ),
+                "research_gap_status": "insufficient_evidence",
+                "research_gap_note": (
+                    "Retrieved evidence did not explicitly state a concrete limitation."
+                ),
+            }
         return {
             "existing_methods": existing_methods,
             "key_limitations": limitations,
@@ -208,6 +232,7 @@ class AIScientificAgent(BaseAgent):
                 "The retrieved evidence describes existing methods but leaves unresolved: "
                 + limitations[0]
             ),
+            "research_gap_status": "evidence_supported",
         }
 
     @staticmethod

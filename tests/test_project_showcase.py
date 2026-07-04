@@ -49,10 +49,25 @@ class RealPaperValidationTests(unittest.TestCase):
                         "section": "Method",
                         "chunk_id": "C2",
                         "score": 0.9,
+                        "support_level": "strong",
+                        "matched_keywords": ["hallucination", "lvlm"],
+                        "text": "LVLM visual evidence reduces hallucination.",
                     }
                 ],
                 "unsupported_claims": [],
                 "evidence_gaps": [],
+                "verification": {
+                    "evidence": {
+                        "passed": False,
+                        "domain_consistency": {
+                            "passed": True,
+                            "matched_topic_concepts": [
+                                "lvlm hallucination"
+                            ],
+                            "issues": [],
+                        },
+                    }
+                },
             }
             metrics = {
                 "keyword_hit_rate": 1.0,
@@ -78,10 +93,18 @@ class RealPaperValidationTests(unittest.TestCase):
                 "## Input",
                 "## Agent Output Summary",
                 "## Evidence Summary",
+                "### Evidence support distribution",
+                "### Topic keyword coverage",
+                "### Strongest evidence detail",
+                "### Domain consistency",
                 "## Evaluation Summary",
                 "## Notes",
             ):
                 self.assertIn(heading, report)
+            self.assertIn(
+                "Evidence coverage may be incomplete; consider increasing top_k",
+                report,
+            )
 
     def test_readme_contains_showcase_modes(self) -> None:
         readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
