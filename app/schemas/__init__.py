@@ -8,6 +8,7 @@ from app.schemas.evidence import (
     support_level_for_score,
 )
 from app.schemas.evaluation import EvalCase, EvalCaseResult, EvalMetrics
+from app.schemas.experiment_blueprint import ExperimentBlueprint
 from app.schemas.experiment_plan import ExperimentPlan
 from app.schemas.feasibility_assessment import FeasibilityAssessment
 from app.schemas.research_direction import ResearchDirection
@@ -18,6 +19,7 @@ from app.schemas.verification_result import VerificationResult
 __all__ = [
     "AgentTraceEntry",
     "ExperimentPlan",
+    "ExperimentBlueprint",
     "EvidenceChunk",
     "EvalCase",
     "EvalCaseResult",

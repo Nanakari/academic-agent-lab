@@ -11,7 +11,7 @@ class FeasibilityAssessment:
 
     direction_title: str
     source_idea_index: int | None
-    overall_score: float
+    planning_readiness_score: float
     recommendation: str
     evidence_readiness: str
     experiment_readiness: str
@@ -26,5 +26,12 @@ class FeasibilityAssessment:
     minimum_viable_experiment: list[str] = field(default_factory=list)
     assessment_note: str = ""
 
+    @property
+    def overall_score(self) -> float:
+        """Deprecated alias retained for Python callers during migration."""
+        return self.planning_readiness_score
+
     def to_dict(self) -> dict:
-        return asdict(self)
+        data = asdict(self)
+        data["overall_score"] = self.planning_readiness_score
+        return data

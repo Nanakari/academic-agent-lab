@@ -10,6 +10,7 @@ from app.agent.ai_scientific_agent import AIScientificAgent
 from app.agent.services import (
     AgentDecisionPolicy,
     EvidenceService,
+    ExperimentBlueprintService,
     FeasibilityService,
     LiteratureAnalysisService,
     PersistenceService,
@@ -20,6 +21,7 @@ from app.memory.scientific_memory import ScientificMemory
 from app.planner.research_planner import ResearchPlanner
 from app.schemas.evidence import EvidenceChunk, support_level_for_score
 from app.schemas.agent_trace import AgentTraceEntry
+from app.schemas.experiment_blueprint import ExperimentBlueprint
 from app.schemas.experiment_plan import ExperimentPlan
 from app.schemas.feasibility_assessment import FeasibilityAssessment
 from app.schemas.research_direction import ResearchDirection
@@ -27,6 +29,7 @@ from app.schemas.research_idea import ResearchIdea
 from app.schemas.scientific_task import ScientificTaskType
 from app.tools.paper_corpus import PaperCorpusIndexer
 from app.tools.paper_analyzer import PaperAnalyzer
+from app.tools.report_writer import ReportWriter
 from app.verifier.evidence_verifier import EvidenceVerifier
 from app.verifier.experiment_verifier import ExperimentVerifier
 from app.verifier.novelty_verifier import NoveltyVerifier
@@ -517,6 +520,21 @@ class AIScientificAgentTests(unittest.TestCase):
                 "minimum_viable_experiment",
                 result["feasibility_assessment"],
             )
+            self.assertEqual(
+                result["feasibility_assessment"]["planning_readiness_score"],
+                result["feasibility_assessment"]["overall_score"],
+            )
+            self.assertIn("experiment_blueprint", result)
+            self.assertTrue(
+                result["experiment_blueprint"]["human_approval_required"]
+            )
+            self.assertFalse(
+                result["experiment_blueprint"]["execution_allowed"]
+            )
+            self.assertIn(
+                "pre_execution_blockers",
+                result["experiment_blueprint"],
+            )
             decisions = [entry["decision"] for entry in result["agent_trace"]]
             self.assertTrue(
                 "skip_revision" in decisions
@@ -547,6 +565,13 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertIn("Planning Readiness Score", report)
             self.assertIn("Recommendation", report)
             self.assertIn("Minimum Viable Experiment", report)
+            self.assertIn("## Experiment Blueprint", report)
+            self.assertIn("Pilot Planning Ready", report)
+            self.assertIn("Human Approval Required", report)
+            self.assertIn("Execution Allowed", report)
+            self.assertIn("Planning Artifacts", report)
+            self.assertIn("Experiment Artifacts", report)
+            self.assertIn("Pre-execution Blockers", report)
 
     def test_unreadable_pdf_does_not_abort_local_evidence_scan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1059,7 +1084,7 @@ class FeasibilityServiceTests(unittest.TestCase):
         assessment = FeasibilityAssessment(
             direction_title="Evidence-aware verification",
             source_idea_index=0,
-            overall_score=0.72,
+            planning_readiness_score=0.72,
             recommendation="proceed_with_caution",
             evidence_readiness="partial",
             experiment_readiness="partial",
@@ -1080,6 +1105,10 @@ class FeasibilityServiceTests(unittest.TestCase):
         self.assertEqual(data["source_idea_index"], 0)
         self.assertEqual(data["recommendation"], "proceed_with_caution")
         self.assertEqual(data["implementation_readiness"], "partial")
+        self.assertEqual(
+            data["planning_readiness_score"],
+            data["overall_score"],
+        )
 
     def test_evidence_failure_cannot_recommend_pilot(self) -> None:
         assessment = self.assess(
@@ -1088,7 +1117,7 @@ class FeasibilityServiceTests(unittest.TestCase):
 
         self.assertEqual(assessment.evidence_readiness, "insufficient")
         self.assertEqual(assessment.recommendation, "needs_more_evidence")
-        self.assertLess(assessment.overall_score, 0.75)
+        self.assertLess(assessment.planning_readiness_score, 0.75)
 
     def test_experiment_failure_requires_caution(self) -> None:
         assessment = self.assess(
@@ -1105,7 +1134,7 @@ class FeasibilityServiceTests(unittest.TestCase):
             assessment.recommendation,
             "ready_for_pilot_planning",
         )
-        self.assertGreater(assessment.overall_score, 0.75)
+        self.assertGreater(assessment.planning_readiness_score, 0.75)
         self.assertEqual(assessment.implementation_readiness, "ready")
         self.assertTrue(
             any("POPE" in step for step in assessment.minimum_viable_experiment)
@@ -1125,8 +1154,8 @@ class FeasibilityServiceTests(unittest.TestCase):
         low_priority = self.assess(self.verification())
 
         self.assertEqual(
-            high_priority.overall_score,
-            low_priority.overall_score,
+            high_priority.planning_readiness_score,
+            low_priority.planning_readiness_score,
         )
 
     def test_assessment_does_not_mutate_selected_inputs(self) -> None:
@@ -1162,6 +1191,231 @@ class FeasibilityServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(assessment.resource_requirement, "unknown")
+
+
+class ExperimentBlueprintServiceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.service = ExperimentBlueprintService()
+        self.direction = ResearchDirection(
+            title="Evidence-aware verification",
+            source_idea_title="Evidence-aware verification",
+            source_idea_index=0,
+            target_gap="Verification remains incomplete.",
+            core_problem="How to improve grounded reliability.",
+            hypothesis="A verifier may reduce unsupported outputs.",
+            method_sketch="Route uncertain outputs through a verifier.",
+            evidence_support_level="strong",
+            novelty_risk="low",
+            feasibility_risk="low",
+            recommended_priority="high",
+            assessment_status="verifier_assessed_selected",
+        )
+        self.idea = ResearchIdea(
+            title="Evidence-aware verification",
+            hypothesis="A verifier may reduce unsupported outputs.",
+            motivation="Unsupported outputs remain under uncertainty.",
+            method="Route uncertain outputs through a verifier.",
+        )
+        self.plan = complete_experiment_plan()
+        self.feasibility = self._assessment("ready_for_pilot_planning")
+        self.evidence_assessment = {"status": "sufficient", "gaps": []}
+
+    @staticmethod
+    def _assessment(recommendation: str) -> FeasibilityAssessment:
+        return FeasibilityAssessment(
+            direction_title="Evidence-aware verification",
+            source_idea_index=0,
+            planning_readiness_score=1.0,
+            recommendation=recommendation,
+            evidence_readiness="ready",
+            experiment_readiness="ready",
+            reproducibility_readiness="ready",
+            resource_requirement="unknown",
+            implementation_readiness="ready",
+            dataset_clarity="specified",
+            baseline_clarity="specified",
+            metric_clarity="specified",
+            minimum_viable_experiment=[
+                "Use POPE.",
+                "Compare against Base LVLM.",
+            ],
+        )
+
+    @staticmethod
+    def _verification(
+        *,
+        evidence_passed: bool = True,
+        experiment_passed: bool = True,
+        reproducibility_passed: bool = True,
+    ) -> dict:
+        return {
+            "evidence": {"passed": evidence_passed},
+            "experiment": {"passed": experiment_passed},
+            "reproducibility": {"passed": reproducibility_passed},
+        }
+
+    def build(
+        self,
+        *,
+        verification=None,
+        plan=None,
+        feasibility=None,
+    ) -> ExperimentBlueprint:
+        return self.service.build(
+            selected_direction=self.direction,
+            selected_idea=self.idea,
+            experiment_plan=plan or self.plan,
+            feasibility_assessment=feasibility or self.feasibility,
+            verification=verification or self._verification(),
+            evidence_assessment=self.evidence_assessment,
+        )
+
+    def test_experiment_blueprint_serializes_safe_permission_fields(self) -> None:
+        blueprint = ExperimentBlueprint(
+            direction_title="Evidence-aware verification",
+            source_idea_index=0,
+            objective="Specify a bounded pilot protocol.",
+            hypothesis="Verification may reduce unsupported outputs.",
+            pilot_planning_ready=True,
+            minimum_viable_experiment=["Use POPE."],
+            datasets=["POPE"],
+            baselines=["Base LVLM"],
+            metrics=["Hallucination rate"],
+            ablations=["Remove verifier"],
+            planning_artifacts=["result.json", "report.md"],
+            experiment_artifacts=["raw_predictions_or_outputs"],
+            success_criteria=["Metric can be computed consistently."],
+            failure_criteria=["Metric cannot be computed."],
+            reproducibility_checklist=["Record seeds."],
+            pre_execution_checklist=["Confirm human approval."],
+            pre_execution_blockers=[
+                "Human approval is required before experiment execution."
+            ],
+            blueprint_note="Protocol only.",
+        )
+
+        data = blueprint.to_dict()
+
+        self.assertEqual(data["source_idea_index"], 0)
+        self.assertTrue(data["pilot_planning_ready"])
+        self.assertTrue(data["human_approval_required"])
+        self.assertFalse(data["execution_allowed"])
+        serialized = ReportWriter._serialize(blueprint)
+        self.assertTrue(serialized["human_approval_required"])
+        self.assertFalse(serialized["execution_allowed"])
+        with self.assertRaises(AttributeError):
+            blueprint.execution_allowed = True
+        with self.assertRaises(AttributeError):
+            blueprint.human_approval_required = False
+
+    def test_ready_protocol_still_requires_human_approval(self) -> None:
+        blueprint = self.build()
+
+        self.assertTrue(blueprint.pilot_planning_ready)
+        self.assertTrue(blueprint.human_approval_required)
+        self.assertFalse(blueprint.execution_allowed)
+        self.assertTrue(
+            any(
+                "Human approval" in blocker
+                for blocker in blueprint.pre_execution_blockers
+            )
+        )
+        self.assertIn("human-approved", blueprint.objective)
+
+    def test_evidence_failure_blocks_pilot_planning(self) -> None:
+        blueprint = self.build(
+            verification=self._verification(evidence_passed=False),
+            feasibility=self._assessment("needs_more_evidence"),
+        )
+
+        self.assertFalse(blueprint.pilot_planning_ready)
+        self.assertFalse(blueprint.execution_allowed)
+        self.assertTrue(
+            any(
+                "Evidence verifier failed" in blocker
+                for blocker in blueprint.pre_execution_blockers
+            )
+        )
+
+    def test_experiment_failure_is_blocker_not_failure_criterion(self) -> None:
+        blueprint = self.build(
+            verification=self._verification(experiment_passed=False)
+        )
+
+        self.assertFalse(blueprint.pilot_planning_ready)
+        self.assertTrue(
+            any(
+                "Experiment verifier" in blocker
+                for blocker in blueprint.pre_execution_blockers
+            )
+        )
+        self.assertFalse(
+            any(
+                "verifier" in criterion.casefold()
+                for criterion in blueprint.failure_criteria
+            )
+        )
+
+    def test_missing_plan_field_blocks_pilot_planning(self) -> None:
+        plan = ExperimentPlan(**self.plan.to_dict())
+        plan.datasets = []
+
+        blueprint = self.build(plan=plan)
+
+        self.assertFalse(blueprint.pilot_planning_ready)
+        self.assertIn(
+            "Dataset is not specified.",
+            blueprint.pre_execution_blockers,
+        )
+
+    def test_success_criteria_do_not_assume_improvement(self) -> None:
+        blueprint = self.build()
+
+        self.assertFalse(
+            any(
+                "improve" in criterion.casefold()
+                or "improvement" in criterion.casefold()
+                for criterion in blueprint.success_criteria
+            )
+        )
+        self.assertTrue(
+            any(
+                "target delta" in criterion.casefold()
+                for criterion in blueprint.success_criteria
+            )
+        )
+        self.assertFalse(
+            any(
+                "evidence-related" in criterion.casefold()
+                for criterion in blueprint.success_criteria
+            )
+        )
+        self.assertTrue(
+            any(
+                "evidence-related" in item.casefold()
+                for item in blueprint.pre_execution_checklist
+            )
+        )
+
+    def test_planning_and_experiment_artifacts_are_separated(self) -> None:
+        blueprint = self.build()
+
+        self.assertIn("result.json", blueprint.planning_artifacts)
+        self.assertNotIn("result.json", blueprint.experiment_artifacts)
+        self.assertTrue(blueprint.experiment_artifacts)
+
+    def test_blueprint_does_not_mutate_inputs(self) -> None:
+        direction_before = self.direction.to_dict()
+        idea_before = self.idea.to_dict()
+        plan_before = self.plan.to_dict()
+        feasibility_before = self.feasibility.to_dict()
+
+        self.build()
+
+        self.assertEqual(self.direction.to_dict(), direction_before)
+        self.assertEqual(self.idea.to_dict(), idea_before)
+        self.assertEqual(self.plan.to_dict(), plan_before)
+        self.assertEqual(self.feasibility.to_dict(), feasibility_before)
 
 
 class AgentServiceTests(unittest.TestCase):

@@ -92,7 +92,7 @@ class FeasibilityService:
                 selected_direction,
                 "source_idea_index",
             ),
-            overall_score=score,
+            planning_readiness_score=score,
             recommendation=recommendation,
             evidence_readiness=evidence_readiness,
             experiment_readiness=experiment_readiness,

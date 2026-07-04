@@ -8,6 +8,7 @@ from app.agent.base import BaseAgent
 from app.agent.services import (
     AgentDecisionPolicy,
     EvidenceService,
+    ExperimentBlueprintService,
     FeasibilityService,
     LiteratureAnalysisService,
     PersistenceService,
@@ -68,6 +69,7 @@ class AIScientificAgent(BaseAgent):
         self.decision_policy = AgentDecisionPolicy()
         self.research_direction_service = ResearchDirectionService()
         self.feasibility_service = FeasibilityService()
+        self.experiment_blueprint_service = ExperimentBlueprintService()
         self.literature_analysis_service = LiteratureAnalysisService(
             self.paper_analyzer
         )
@@ -199,6 +201,14 @@ class AIScientificAgent(BaseAgent):
                 evidence_assessment=evidence_assessment,
                 verification=verification,
             )
+            experiment_blueprint = self.experiment_blueprint_service.build(
+                selected_direction=selected_direction,
+                selected_idea=selected_idea,
+                experiment_plan=experiment_plan,
+                feasibility_assessment=feasibility_assessment,
+                verification=verification,
+                evidence_assessment=evidence_assessment,
+            )
             verification_passed = all(
                 item["passed"] for item in verification.values()
             )
@@ -228,6 +238,7 @@ class AIScientificAgent(BaseAgent):
                 ],
                 "selected_direction": selected_direction.to_dict(),
                 "feasibility_assessment": feasibility_assessment.to_dict(),
+                "experiment_blueprint": experiment_blueprint.to_dict(),
                 "selected_idea": selected_idea.to_dict(),
                 "experiment_plan": experiment_plan.to_dict(),
                 "verification": verification,

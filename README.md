@@ -47,6 +47,15 @@ summarizes readiness, explicit resource signals, risks, mitigations, and a
 minimum viable experiment for human review. Its score is checklist-oriented,
 not a probability of feasibility, and it does not trigger experiment execution.
 
+The agent also builds a human-reviewable pilot planning protocol for the
+selected direction. The blueprint separates planning and future experiment
+artifacts and records objectives, criteria, reproducibility checks, and
+pre-execution blockers. It does not execute experiments, download datasets, or
+train models; human approval is always required and execution remains disabled.
+
+For result compatibility, `overall_score` is a deprecated alias of
+`planning_readiness_score` and may be removed in a future version.
+
 ## Architecture
 
 ```text

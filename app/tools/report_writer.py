@@ -216,12 +216,16 @@ class ReportWriter:
             ])
         feasibility = result.get("feasibility_assessment")
         if feasibility:
+            readiness_score = feasibility.get(
+                "planning_readiness_score",
+                feasibility.get("overall_score", 0.0),
+            )
             lines.extend([
                 "## Feasibility Assessment",
                 "",
                 (
                     f"- Planning Readiness Score: "
-                    f"{feasibility['overall_score']:.3f}"
+                    f"{readiness_score:.3f}"
                 ),
                 f"- Recommendation: {feasibility['recommendation']}",
                 f"- Evidence Readiness: {feasibility['evidence_readiness']}",
@@ -264,6 +268,109 @@ class ReportWriter:
                 ],
                 "",
                 f"**Assessment Note:** {feasibility['assessment_note']}",
+                "",
+            ])
+        blueprint = result.get("experiment_blueprint")
+        if blueprint:
+            blockers = blueprint.get("pre_execution_blockers", [])
+            lines.extend([
+                "## Experiment Blueprint",
+                "",
+                f"- Objective: {blueprint['objective']}",
+                f"- Hypothesis: {blueprint['hypothesis']}",
+                (
+                    f"- Pilot Planning Ready: "
+                    f"{blueprint['pilot_planning_ready']}"
+                ),
+                (
+                    f"- Human Approval Required: "
+                    f"{blueprint['human_approval_required']}"
+                ),
+                f"- Execution Allowed: {blueprint['execution_allowed']}",
+                "",
+                "### Pre-execution Blockers",
+                "",
+                *(
+                    [f"- {blocker}" for blocker in blockers]
+                    if blockers
+                    else ["- None"]
+                ),
+                "",
+                "### Minimum Viable Experiment",
+                "",
+                *[
+                    f"- {step}"
+                    for step in blueprint.get(
+                        "minimum_viable_experiment",
+                        [],
+                    )
+                ],
+                "",
+                "### Datasets",
+                "",
+                *[f"- {item}" for item in blueprint.get("datasets", [])],
+                "",
+                "### Baselines",
+                "",
+                *[f"- {item}" for item in blueprint.get("baselines", [])],
+                "",
+                "### Metrics",
+                "",
+                *[f"- {item}" for item in blueprint.get("metrics", [])],
+                "",
+                "### Ablations",
+                "",
+                *[f"- {item}" for item in blueprint.get("ablations", [])],
+                "",
+                "### Planning Artifacts",
+                "",
+                *[
+                    f"- {item}"
+                    for item in blueprint.get("planning_artifacts", [])
+                ],
+                "",
+                "### Experiment Artifacts",
+                "",
+                *[
+                    f"- {item}"
+                    for item in blueprint.get("experiment_artifacts", [])
+                ],
+                "",
+                "### Success Criteria",
+                "",
+                *[
+                    f"- {item}"
+                    for item in blueprint.get("success_criteria", [])
+                ],
+                "",
+                "### Failure Criteria",
+                "",
+                *[
+                    f"- {item}"
+                    for item in blueprint.get("failure_criteria", [])
+                ],
+                "",
+                "### Reproducibility Checklist",
+                "",
+                *[
+                    f"- {item}"
+                    for item in blueprint.get(
+                        "reproducibility_checklist",
+                        [],
+                    )
+                ],
+                "",
+                "### Pre-execution Checklist",
+                "",
+                *[
+                    f"- {item}"
+                    for item in blueprint.get(
+                        "pre_execution_checklist",
+                        [],
+                    )
+                ],
+                "",
+                f"**Blueprint Note:** {blueprint['blueprint_note']}",
                 "",
             ])
         lines.extend([
@@ -330,6 +437,8 @@ class ReportWriter:
 
     @classmethod
     def _serialize(cls, value: Any) -> Any:
+        if hasattr(value, "to_dict") and callable(value.to_dict):
+            return cls._serialize(value.to_dict())
         if is_dataclass(value):
             return cls._serialize(asdict(value))
         if isinstance(value, Enum):
