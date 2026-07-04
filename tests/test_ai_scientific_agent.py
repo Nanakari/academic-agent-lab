@@ -8,6 +8,7 @@ from pathlib import Path
 from app.agent.ai_scientific_agent import AIScientificAgent
 from app.agent.services import (
     EvidenceService,
+    LiteratureAnalysisService,
     PersistenceService,
     VerificationPipeline,
 )
@@ -25,6 +26,7 @@ from app.verifier.novelty_verifier import NoveltyVerifier
 from app.verifier.reproducibility_verifier import ReproducibilityVerifier
 from app.verifier.claim_filter import is_verifiable_claim
 from app.verifier.topic_consistency import (
+    TopicConsistencyConfig,
     domain_consistency_score,
     evidence_matches_concept,
 )
@@ -249,6 +251,98 @@ class EvidenceVerifierTests(unittest.TestCase):
             any(
                 "topic-domain consistency check failed" in issue
                 for issue in result.issues
+            )
+        )
+
+    def test_domain_modes_and_legacy_boolean_compatibility(self) -> None:
+        idea = ResearchIdea(
+            title="Autonomous agent action prediction",
+            hypothesis="Agents predict actions in traffic.",
+            motivation="Autonomous agents need reliable action prediction.",
+            method="Predict actions from networked traffic observations.",
+            evidence_refs=["E1"],
+        )
+        evidence = [{
+            "evidence_id": "E1",
+            "title": "Autonomous Driving Agents",
+            "text": (
+                "Autonomous driving agents operate in networked traffic "
+                "environments and predict actions reliably."
+            ),
+            "score": 0.4,
+        }]
+        topic = "graph neural network traffic prediction"
+
+        off = EvidenceVerifier(domain_mode="off").verify(
+            idea, evidence, ideas=[idea], topic=topic
+        )
+        warning = EvidenceVerifier(domain_mode="warning").verify(
+            idea, evidence, ideas=[idea], topic=topic
+        )
+        strict = EvidenceVerifier(domain_mode="strict").verify(
+            idea, evidence, ideas=[idea], topic=topic
+        )
+
+        self.assertTrue(off.passed)
+        self.assertEqual(off.domain_consistency, {})
+        self.assertTrue(warning.passed)
+        self.assertTrue(warning.warnings)
+        self.assertFalse(warning.domain_consistency["passed"])
+        self.assertFalse(strict.passed)
+        self.assertTrue(strict.issues)
+        self.assertEqual(
+            EvidenceVerifier(strict_domain=True).domain_mode,
+            "strict",
+        )
+        self.assertEqual(
+            EvidenceVerifier(
+                strict_domain=False,
+                domain_mode="strict",
+            ).domain_mode,
+            "off",
+        )
+        with self.assertRaisesRegex(ValueError, "allowed values"):
+            EvidenceVerifier(domain_mode="invalid")
+
+    def test_overclaim_and_key_claim_citation_are_preserved(self) -> None:
+        idea = ResearchIdea(
+            title="Visual evidence verifier",
+            hypothesis="This always solves LVLM hallucination.",
+            motivation="Visual evidence grounds generated answers.",
+            method="Verify each answer against image evidence.",
+            evidence_refs=["E1"],
+        )
+        evidence = [{
+            "evidence_id": "E1",
+            "paper_id": "paper",
+            "title": "Grounded LVLM",
+            "source_path": "paper.txt",
+            "file_type": "txt",
+            "page": None,
+            "section": "Method",
+            "chunk_id": "C1",
+            "text": (
+                "Visual evidence verification grounds LVLM generated answers "
+                "and reduces measured hallucination."
+            ),
+            "score": 0.8,
+        }]
+
+        result = EvidenceVerifier().verify(
+            idea,
+            evidence,
+            claims=["Visual evidence verification grounds LVLM answers."],
+            ideas=[idea],
+        )
+
+        self.assertFalse(result.passed)
+        self.assertTrue(
+            any("Overclaiming language detected" in issue for issue in result.issues)
+        )
+        self.assertTrue(
+            any(
+                citation["claim"].startswith("key claim")
+                for citation in result.supported_claims
             )
         )
 
@@ -616,6 +710,82 @@ class ClaimFilteringAndDomainConsistencyTests(unittest.TestCase):
         self.assertFalse(negative["domain_consistent"])
         self.assertTrue(llm_positive["passed"])
         self.assertTrue(agentic_positive["passed"])
+
+    def test_hyphen_normalization_and_soft_fallback_diagnostics(self) -> None:
+        hyphenated = domain_consistency_score(
+            "multi-agent collaboration reliability",
+            [{
+                "evidence_id": "E1",
+                "text": "Multi agent collaboration improves reliability.",
+            }],
+        )
+        semantic_only = domain_consistency_score(
+            "agent reliability under long-horizon tasks",
+            [{
+                "evidence_id": "E2",
+                "text": "Robust autonomous systems operate over extended workflows.",
+            }],
+            TopicConsistencyConfig(mode="strict"),
+        )
+
+        self.assertTrue(hyphenated["passed"])
+        self.assertFalse(semantic_only["passed"])
+        self.assertTrue(semantic_only["warnings"])
+        self.assertIn(
+            "No direct topic-critical concept matched",
+            semantic_only["reason"],
+        )
+
+
+class LiteratureAnalysisServiceTests(unittest.TestCase):
+    class StubAnalyzer:
+        def __init__(self, limitation: str) -> None:
+            self.limitation = limitation
+
+        def extract_problem_method_experiment_limitation(self, text: str) -> dict:
+            return {
+                "problem": ["Agent reliability"],
+                "method": ["Hierarchical planning verifies transitions."],
+                "experiment": ["A benchmark comparison."],
+                "limitation": [self.limitation],
+            }
+
+    @staticmethod
+    def evidence() -> list[dict]:
+        return [{
+            "excerpt": "A paper excerpt without explicit section headings.",
+            "text": "A paper excerpt without explicit section headings.",
+            "section": None,
+        }]
+
+    def test_no_evidence_returns_insufficient_status(self) -> None:
+        service = LiteratureAnalysisService(
+            self.StubAnalyzer("Planning errors propagate.")
+        )
+
+        result = service.analyze([])
+
+        self.assertEqual(result["research_gap_status"], "insufficient_evidence")
+
+    def test_placeholder_limitation_returns_insufficient_status(self) -> None:
+        service = LiteratureAnalysisService(
+            self.StubAnalyzer("Not explicitly stated in the local evidence")
+        )
+
+        result = service.analyze(self.evidence())
+
+        self.assertEqual(result["research_gap_status"], "insufficient_evidence")
+
+    def test_concrete_limitation_returns_supported_status(self) -> None:
+        service = LiteratureAnalysisService(
+            self.StubAnalyzer(
+                "Planning errors propagate across long tool-use trajectories."
+            )
+        )
+
+        result = service.analyze(self.evidence())
+
+        self.assertEqual(result["research_gap_status"], "evidence_supported")
 
 
 if __name__ == "__main__":

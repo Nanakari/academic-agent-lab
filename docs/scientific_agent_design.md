@@ -42,6 +42,24 @@ labels support as strong, moderate, weak, or insufficient. The other verifiers
 check historical idea overlap, experiment fields, and reproducibility details.
 Failure triggers at most one revision.
 
+### Domain Consistency Design Notes
+
+Domain consistency is lightweight lexical/concept coverage, not
+embedding-based semantic search or LLM entailment. Broad n-gram overlap is
+reported as diagnostic coverage, while strict acceptance still requires a
+topic-critical phrase or multi-term group in one evidence item.
+
+The ordinary demo leaves this check off. Warning mode records terminology
+mismatches without failing verification, while Real Paper Validation uses
+strict mode to make negative controls visible. Strict mode may be conservative
+when relevant papers use substantially different terminology.
+
+EvidenceVerifier is a reliability check over local evidence provenance. It
+does not prove that a generated idea is novel or that a scientific conclusion
+is true. The current system is intended for learning, demonstrations, offline
+prototyping, and explainable validation rather than production literature
+review.
+
 ## Why Structured Evidence Matters
 
 A score alone is not an adequate scientific citation. `EvidenceChunk` retains:

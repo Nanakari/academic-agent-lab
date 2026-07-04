@@ -7,6 +7,7 @@ from pathlib import Path
 from app.agent.base import BaseAgent
 from app.agent.services import (
     EvidenceService,
+    LiteratureAnalysisService,
     PersistenceService,
     VerificationPipeline,
 )
@@ -18,7 +19,6 @@ from app.tools.paper_analyzer import PaperAnalyzer
 from app.tools.paper_corpus import PaperCorpusIndexer
 from app.tools.report_writer import ReportWriter
 from app.tools.research_idea_generator import ResearchIdeaGenerator
-from app.verifier.claim_filter import is_verifiable_claim
 
 
 class AIScientificAgent(BaseAgent):
@@ -32,7 +32,8 @@ class AIScientificAgent(BaseAgent):
         top_k: int = 5,
         memory: ScientificMemory | None = None,
         llm=None,
-        strict_domain: bool = False,
+        strict_domain: bool | None = None,
+        domain_mode: str = "off",
     ) -> None:
         super().__init__(name="AIScientificAgent", max_steps=8)
         self.project_root = (
@@ -61,12 +62,16 @@ class AIScientificAgent(BaseAgent):
         self.idea_generator = ResearchIdeaGenerator(llm=llm)
         self.experiment_designer = ExperimentDesigner()
         self.report_writer = ReportWriter()
+        self.literature_analysis_service = LiteratureAnalysisService(
+            self.paper_analyzer
+        )
         self.evidence_service = EvidenceService(
             self.project_root,
             self.paper_corpus,
             self.scientific_memory,
         )
         self.verification_pipeline = VerificationPipeline(
+            domain_mode=domain_mode,
             strict_domain=strict_domain,
         )
         self.persistence_service = PersistenceService(
@@ -187,65 +192,8 @@ class AIScientificAgent(BaseAgent):
         return self.evidence_service.retrieve(query, top_k or self.top_k)
 
     def _analyze_evidence(self, evidence_context: list[dict]) -> dict:
-        if not evidence_context:
-            return {
-                "existing_methods": ["No relevant method was found in local evidence."],
-                "key_limitations": ["Local evidence coverage is insufficient."],
-                "research_gap": (
-                    "A defensible gap cannot yet be established from local papers; "
-                    "the generated ideas must be treated as exploratory."
-                ),
-                "research_gap_status": "insufficient_evidence",
-                "research_gap_note": (
-                    "Retrieved evidence did not explicitly state a concrete limitation."
-                ),
-            }
-        combined = "\n".join(item["excerpt"] for item in evidence_context)
-        extracted = self.paper_analyzer.extract_problem_method_experiment_limitation(combined)
-        method_sections = self._evidence_from_sections(
-            evidence_context,
-            {"method", "methods", "methodology", "approach"},
-        )
-        limitation_sections = self._evidence_from_sections(
-            evidence_context,
-            {"limitation", "limitations", "future work"},
-        )
-        existing_methods = method_sections or extracted["method"]
-        limitations = limitation_sections or extracted["limitation"]
-        if not limitations or not is_verifiable_claim(limitations[0]):
-            return {
-                "existing_methods": existing_methods,
-                "key_limitations": limitations,
-                "research_gap": (
-                    "A defensible research gap cannot be established from the "
-                    "retrieved evidence."
-                ),
-                "research_gap_status": "insufficient_evidence",
-                "research_gap_note": (
-                    "Retrieved evidence did not explicitly state a concrete limitation."
-                ),
-            }
-        return {
-            "existing_methods": existing_methods,
-            "key_limitations": limitations,
-            "research_gap": (
-                "The retrieved evidence describes existing methods but leaves unresolved: "
-                + limitations[0]
-            ),
-            "research_gap_status": "evidence_supported",
-        }
-
-    @staticmethod
-    def _evidence_from_sections(
-        evidence_context: list[dict],
-        section_names: set[str],
-    ) -> list[str]:
-        """Prefer explicit section metadata over cue matching in chunk text."""
-        return [
-            item["text"]
-            for item in evidence_context
-            if str(item.get("section") or "").casefold() in section_names
-        ][:3]
+        """Compatibility wrapper around LiteratureAnalysisService."""
+        return self.literature_analysis_service.analyze(evidence_context)
 
     @staticmethod
     def _revise_once(idea, experiment_plan, evidence_context):

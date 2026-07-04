@@ -111,11 +111,22 @@ class RealPaperValidationReportWriter:
             "### Domain consistency",
             "",
             f"- Passed: {domain_consistency.get('passed', 'Not enabled')}",
+            f"- Mode: {domain_consistency.get('mode', 'off')}",
             (
                 "- Matched topic concepts: "
                 f"{self._join(domain_consistency.get('matched_topic_concepts'))}"
             ),
+            (
+                "- Missing topic concepts: "
+                f"{self._join(domain_consistency.get('missing_topic_concepts'))}"
+            ),
             f"- Issues: {self._join(domain_consistency.get('issues'))}",
+            f"- Warnings: {self._join(domain_consistency.get('warnings'))}",
+            f"- Reason: {domain_consistency.get('reason', 'Not evaluated')}",
+            (
+                "- Verifier warnings: "
+                f"{self._join(evidence_verification.get('warnings'))}"
+            ),
             "",
             "## Evaluation Summary",
             "",

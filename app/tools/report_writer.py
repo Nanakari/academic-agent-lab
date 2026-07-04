@@ -165,6 +165,10 @@ class ReportWriter:
                 f"(score={verification['score']:.2f})"
             )
             lines.extend(f"  - Issue: {issue}" for issue in verification["issues"])
+            lines.extend(
+                f"  - Warning: {warning}"
+                for warning in verification.get("warnings", [])
+            )
         lines.extend([
             "",
             f"Revision performed: **{result['revision_performed']}**",

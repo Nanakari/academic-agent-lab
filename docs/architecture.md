@@ -14,6 +14,7 @@ app/
     ai_scientific_agent.py
     services/
       evidence_service.py
+      literature_analysis_service.py
       verification_pipeline.py
       persistence_service.py
   planner/
@@ -63,7 +64,8 @@ workflow components.
    paper-derived memory is a secondary evidence source. The index is cached
    within the current process and refreshed when file metadata or chunk settings
    change.
-3. `PaperAnalyzer` extracts methods and limitations, preferring detected
+3. `LiteratureAnalysisService` uses `PaperAnalyzer` to extract methods,
+   limitations, and an evidence-aware research-gap status, preferring detected
    section metadata.
 4. `ResearchIdeaGenerator` creates and ranks three candidate ideas.
 5. `ExperimentDesigner` creates datasets, baselines, metrics, ablations,

@@ -153,6 +153,13 @@ also applies exact-key deduplication to ideas and paper notes and warns on
 malformed JSONL lines. These safeguards improve repeated local runs, but they
 are not a production database, distributed cache, or vector index.
 
+Domain consistency is a lightweight lexical/concept coverage check with
+`off`, `warning`, and `strict` modes. It is not semantic entailment,
+embedding-based retrieval, or proof that a scientific conclusion is correct.
+Real Paper Validation uses strict mode to expose topic mismatch; this can be
+conservative when relevant papers use substantially different terminology.
+Warning mode is diagnostic only and does not mean that evidence is sufficient.
+
 Default scientific-agent outputs:
 
 ```text

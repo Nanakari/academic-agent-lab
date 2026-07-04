@@ -113,6 +113,8 @@ class RealPaperValidationTests(unittest.TestCase):
         self.assertIn("Evaluation Mode", readme)
         self.assertIn("Real Paper Validation", readme)
         self.assertIn("Structured Evidence Citation", readme)
+        self.assertIn("lightweight lexical/concept coverage", readme)
+        self.assertIn("not semantic entailment", readme)
         self.assertTrue(
             (PROJECT_ROOT / "examples" / "resume_description.md").exists()
         )

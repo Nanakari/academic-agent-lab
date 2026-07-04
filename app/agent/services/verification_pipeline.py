@@ -12,8 +12,15 @@ from app.verifier.reproducibility_verifier import ReproducibilityVerifier
 class VerificationPipeline:
     """Run the four lightweight verifiers and build evidence summaries."""
 
-    def __init__(self, strict_domain: bool = False) -> None:
-        self.evidence_verifier = EvidenceVerifier(strict_domain=strict_domain)
+    def __init__(
+        self,
+        strict_domain: bool | None = None,
+        domain_mode: str = "off",
+    ) -> None:
+        self.evidence_verifier = EvidenceVerifier(
+            domain_mode=domain_mode,
+            strict_domain=strict_domain,
+        )
         self.novelty_verifier = NoveltyVerifier()
         self.experiment_verifier = ExperimentVerifier()
         self.reproducibility_verifier = ReproducibilityVerifier()

@@ -18,6 +18,7 @@ class VerificationResult:
     evidence_used: list[dict] = field(default_factory=list)
     support_level: str | None = None
     domain_consistency: dict = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
