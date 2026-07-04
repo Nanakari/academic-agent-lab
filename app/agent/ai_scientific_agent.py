@@ -10,6 +10,7 @@ from app.agent.services import (
     EvidenceService,
     LiteratureAnalysisService,
     PersistenceService,
+    ResearchDirectionService,
     VerificationPipeline,
 )
 from app.memory.scientific_memory import ScientificMemory
@@ -64,6 +65,7 @@ class AIScientificAgent(BaseAgent):
         self.experiment_designer = ExperimentDesigner()
         self.report_writer = ReportWriter()
         self.decision_policy = AgentDecisionPolicy()
+        self.research_direction_service = ResearchDirectionService()
         self.literature_analysis_service = LiteratureAnalysisService(
             self.paper_analyzer
         )
@@ -172,6 +174,16 @@ class AIScientificAgent(BaseAgent):
                 )
             )
 
+            research_directions, selected_direction = (
+                self.research_direction_service.plan(
+                    topic=user_query.strip(),
+                    literature_analysis=literature_analysis,
+                    candidate_ideas=ideas,
+                    selected_idea=selected_idea,
+                    evidence_context=evidence_context,
+                    verification=verification,
+                )
+            )
             evidence_assessment = self.verification_pipeline.build_evidence_assessment(
                 evidence_context,
                 verification["evidence"],
@@ -201,6 +213,10 @@ class AIScientificAgent(BaseAgent):
                 "corpus_warnings": list(self.paper_corpus.warnings),
                 "literature_analysis": literature_analysis,
                 "candidate_ideas": [idea.to_dict() for idea in ideas],
+                "research_directions": [
+                    direction.to_dict() for direction in research_directions
+                ],
+                "selected_direction": selected_direction.to_dict(),
                 "selected_idea": selected_idea.to_dict(),
                 "experiment_plan": experiment_plan.to_dict(),
                 "verification": verification,

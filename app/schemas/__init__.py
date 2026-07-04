@@ -9,6 +9,7 @@ from app.schemas.evidence import (
 )
 from app.schemas.evaluation import EvalCase, EvalCaseResult, EvalMetrics
 from app.schemas.experiment_plan import ExperimentPlan
+from app.schemas.research_direction import ResearchDirection
 from app.schemas.research_idea import ResearchIdea
 from app.schemas.scientific_task import ScientificTaskType
 from app.schemas.verification_result import VerificationResult
@@ -22,6 +23,7 @@ __all__ = [
     "EvalMetrics",
     "PaperChunk",
     "PaperDocument",
+    "ResearchDirection",
     "ResearchIdea",
     "ScientificTaskType",
     "VerificationResult",

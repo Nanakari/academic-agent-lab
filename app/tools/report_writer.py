@@ -136,6 +136,74 @@ class ReportWriter:
                 f"- Rank score: {idea['rank_score']:.3f}",
                 "",
             ])
+        research_directions = result.get("research_directions", [])
+        if research_directions:
+            lines.extend(["## Candidate Research Directions", ""])
+            for index, direction in enumerate(research_directions, start=1):
+                supporting_evidence = (
+                    ", ".join(direction.get("supporting_evidence", []))
+                    or "None"
+                )
+                lines.extend([
+                    f"### {index}. {direction['title']}",
+                    "",
+                    (
+                        f"- Source Idea: "
+                        f"{direction.get('source_idea_title') or 'No source idea'}"
+                    ),
+                    f"- Target Gap: {direction['target_gap']}",
+                    f"- Core Problem: {direction['core_problem']}",
+                    f"- Hypothesis: {direction['hypothesis']}",
+                    f"- Method Sketch: {direction['method_sketch']}",
+                    (
+                        f"- Evidence Support Level: "
+                        f"{direction['evidence_support_level']}"
+                    ),
+                    f"- Novelty Risk: {direction['novelty_risk']}",
+                    f"- Feasibility Risk: {direction['feasibility_risk']}",
+                    (
+                        f"- Recommended Priority: "
+                        f"{direction['recommended_priority']}"
+                    ),
+                    (
+                        f"- Assessment Status: "
+                        f"{direction.get('assessment_status', 'not_recorded')}"
+                    ),
+                    f"- Supporting Evidence: {supporting_evidence}",
+                    "",
+                    "Next Steps:",
+                    "",
+                    *[
+                        f"- {step}"
+                        for step in direction.get("next_steps", [])
+                    ],
+                    "",
+                ])
+        selected_direction = result.get("selected_direction")
+        if selected_direction:
+            lines.extend([
+                "## Selected Research Direction",
+                "",
+                f"- Title: {selected_direction['title']}",
+                (
+                    f"- Source Idea: "
+                    f"{selected_direction.get('source_idea_title') or 'No source idea'}"
+                ),
+                (
+                    f"- Recommended Priority: "
+                    f"{selected_direction['recommended_priority']}"
+                ),
+                (
+                    f"- Assessment Status: "
+                    f"{selected_direction.get('assessment_status', 'not_recorded')}"
+                ),
+                (
+                    "- Rationale: Selected because it maps to the idea used for "
+                    "experiment planning; its priority is assigned by a "
+                    "deterministic planning heuristic."
+                ),
+                "",
+            ])
         lines.extend([
             "## Selected idea",
             "",

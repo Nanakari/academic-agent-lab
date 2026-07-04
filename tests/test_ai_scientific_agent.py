@@ -12,6 +12,7 @@ from app.agent.services import (
     EvidenceService,
     LiteratureAnalysisService,
     PersistenceService,
+    ResearchDirectionService,
     VerificationPipeline,
 )
 from app.memory.scientific_memory import ScientificMemory
@@ -19,6 +20,7 @@ from app.planner.research_planner import ResearchPlanner
 from app.schemas.evidence import EvidenceChunk, support_level_for_score
 from app.schemas.agent_trace import AgentTraceEntry
 from app.schemas.experiment_plan import ExperimentPlan
+from app.schemas.research_direction import ResearchDirection
 from app.schemas.research_idea import ResearchIdea
 from app.schemas.scientific_task import ScientificTaskType
 from app.tools.paper_corpus import PaperCorpusIndexer
@@ -489,6 +491,17 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertIn("unsupported_claims", result)
             self.assertIn("agent_trace", result)
             self.assertGreaterEqual(len(result["agent_trace"]), 4)
+            self.assertIn("research_directions", result)
+            self.assertIn("selected_direction", result)
+            self.assertGreaterEqual(len(result["research_directions"]), 1)
+            self.assertEqual(
+                result["selected_direction"]["source_idea_title"],
+                result["selected_idea"]["title"],
+            )
+            self.assertEqual(
+                result["selected_direction"]["assessment_status"],
+                "verifier_assessed_selected",
+            )
             decisions = [entry["decision"] for entry in result["agent_trace"]]
             self.assertTrue(
                 "skip_revision" in decisions
@@ -511,6 +524,10 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertIn("Decision:", report)
             self.assertIn("Action:", report)
             self.assertIn("Reason:", report)
+            self.assertIn("## Candidate Research Directions", report)
+            self.assertIn("## Selected Research Direction", report)
+            self.assertIn("Evidence Support Level", report)
+            self.assertIn("Recommended Priority", report)
 
     def test_unreadable_pdf_does_not_abort_local_evidence_scan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -738,6 +755,168 @@ class AgentDecisionPolicyTests(unittest.TestCase):
             entry.decision,
             "report_as_exploratory_or_insufficient",
         )
+
+
+class ResearchDirectionServiceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.service = ResearchDirectionService()
+        self.ideas = [
+            ResearchIdea(
+                title="Selected evidence-aware verifier",
+                hypothesis="Verification may reduce unsupported outputs.",
+                motivation="Unsupported outputs remain under uncertainty.",
+                method="Route uncertain outputs through a verifier.",
+                evidence_refs=["E1", "E2"],
+                rank_score=0.9,
+            ),
+            ResearchIdea(
+                title="Unselected benchmark direction",
+                hypothesis="Counterfactual pairs may reveal failures.",
+                motivation="Static scores can hide sensitivity.",
+                method="Build controlled counterfactual pairs.",
+                evidence_refs=["E1"],
+                rank_score=0.8,
+            ),
+        ]
+        self.evidence = [
+            {"evidence_id": "E1"},
+            {"evidence_id": "E2"},
+        ]
+        self.analysis = {
+            "research_gap": "Verification under uncertainty remains limited.",
+            "research_gap_status": "evidence_supported",
+        }
+
+    @staticmethod
+    def verification(
+        *,
+        evidence_passed: bool = True,
+        novelty_passed: bool = True,
+        experiment_passed: bool = True,
+        reproducibility_passed: bool = True,
+    ) -> dict:
+        return {
+            "evidence": {
+                "passed": evidence_passed,
+                "support_level": "strong",
+                "issues": [],
+            },
+            "novelty": {"passed": novelty_passed, "issues": []},
+            "experiment": {"passed": experiment_passed, "issues": []},
+            "reproducibility": {
+                "passed": reproducibility_passed,
+                "issues": [],
+            },
+        }
+
+    def test_research_direction_serializes(self) -> None:
+        direction = ResearchDirection(
+            title="Evidence-aware LVLM verification",
+            source_idea_title="Evidence-aware verifier idea",
+            target_gap="Hallucination remains under visual uncertainty.",
+            core_problem="How to reduce hallucination without retraining.",
+            hypothesis="Evidence verification may reduce hallucination.",
+            method_sketch="Route uncertain answers through a verifier.",
+            supporting_evidence=["E1"],
+            evidence_support_level="moderate",
+            novelty_risk="low",
+            feasibility_risk="medium",
+            recommended_priority="medium",
+            assessment_status="verifier_assessed_selected",
+            next_steps=["Define the minimum viable experiment."],
+        )
+
+        data = direction.to_dict()
+
+        self.assertEqual(data["title"], "Evidence-aware LVLM verification")
+        self.assertEqual(data["supporting_evidence"], ["E1"])
+        self.assertEqual(data["source_idea_title"], "Evidence-aware verifier idea")
+
+    def test_selected_direction_matches_selected_idea_only(self) -> None:
+        directions, selected = self.service.plan(
+            topic="LVLM reliability",
+            literature_analysis=self.analysis,
+            candidate_ideas=self.ideas,
+            selected_idea=self.ideas[0],
+            evidence_context=self.evidence,
+            verification=self.verification(),
+        )
+
+        self.assertEqual(len(directions), 2)
+        self.assertEqual(selected.source_idea_title, self.ideas[0].title)
+        self.assertEqual(
+            selected.assessment_status,
+            "verifier_assessed_selected",
+        )
+        self.assertEqual(selected.novelty_risk, "low")
+        self.assertEqual(
+            directions[1].assessment_status,
+            "heuristic_unverified",
+        )
+        self.assertEqual(directions[1].novelty_risk, "unknown")
+        self.assertEqual(directions[1].feasibility_risk, "unknown")
+
+    def test_failed_evidence_forces_exploratory_selected_direction(self) -> None:
+        _, selected = self.service.plan(
+            topic="LVLM reliability",
+            literature_analysis=self.analysis,
+            candidate_ideas=self.ideas,
+            selected_idea=self.ideas[0],
+            evidence_context=self.evidence,
+            verification=self.verification(evidence_passed=False),
+        )
+
+        self.assertEqual(selected.evidence_support_level, "insufficient")
+        self.assertEqual(selected.recommended_priority, "exploratory")
+
+    def test_failed_novelty_cannot_receive_high_priority(self) -> None:
+        _, selected = self.service.plan(
+            topic="LVLM reliability",
+            literature_analysis=self.analysis,
+            candidate_ideas=self.ideas,
+            selected_idea=self.ideas[0],
+            evidence_context=self.evidence,
+            verification=self.verification(novelty_passed=False),
+        )
+
+        self.assertEqual(selected.novelty_risk, "high")
+        self.assertNotEqual(selected.recommended_priority, "high")
+
+    def test_empty_ideas_returns_conservative_fallback(self) -> None:
+        directions, selected = self.service.plan(
+            topic="LVLM reliability",
+            literature_analysis={
+                "research_gap_status": "insufficient_evidence",
+            },
+            candidate_ideas=[],
+            selected_idea=None,
+            evidence_context=[],
+            verification=None,
+        )
+
+        self.assertEqual(len(directions), 1)
+        self.assertIs(selected, directions[0])
+        self.assertIsNone(selected.source_idea_title)
+        self.assertEqual(selected.evidence_support_level, "insufficient")
+        self.assertEqual(selected.recommended_priority, "exploratory")
+
+    def test_selection_rejects_direction_that_does_not_map_to_selected_idea(
+        self,
+    ) -> None:
+        direction = ResearchDirection(
+            title="Direction A",
+            source_idea_title="Idea A",
+            target_gap="A local gap.",
+            core_problem="A scoped problem.",
+            hypothesis="A testable hypothesis.",
+            method_sketch="A bounded method.",
+        )
+
+        with self.assertRaisesRegex(ValueError, "Idea B"):
+            self.service.select_direction(
+                [direction],
+                selected_idea_title="Idea B",
+            )
 
 
 class AgentServiceTests(unittest.TestCase):

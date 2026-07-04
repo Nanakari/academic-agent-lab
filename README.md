@@ -34,6 +34,13 @@ results are preserved and reported instead of being silently corrected.
 The trace also records whether the agent skipped or triggered a bounded
 revision after the first verifier pass.
 
+The scientific mode also separates lightweight research ideas from structured
+research directions. A direction records its source idea, target gap,
+hypothesis, method sketch, evidence support, risks, heuristic priority, and
+next steps. Only the direction tied to the selected idea inherits final
+verifier results; other candidate directions remain explicitly unverified.
+This planning-stage heuristic does not prove novelty or feasibility.
+
 ## Architecture
 
 ```text
