@@ -302,7 +302,16 @@ class AgentExternalIntegrationTests(unittest.TestCase):
             self.assertIn("external_search_status", saved)
             report = (output / "report.md").read_text(encoding="utf-8")
             self.assertIn("## External Evidence Retrieved", report)
-            self.assertIn("## External Source Warnings", report)
+            self.assertIn("used only local papers", report)
+            self.assertNotIn(
+                "arXiv evidence is based on metadata",
+                report,
+            )
+            self.assertNotIn(
+                "GitHub repository evidence indicates",
+                report,
+            )
+            self.assertNotIn("## External Source Warnings", report)
             self.assertTrue(
                 result["experiment_blueprint"]["human_approval_required"]
             )

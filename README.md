@@ -137,6 +137,20 @@ Run the fixture-backed AI Scientific Agent demo:
 python app/ai_scientific_demo.py --topic "LVLM hallucination mitigation" --papers-dir tests/fixtures/papers --top-k 5
 ```
 
+Run the Streamlit Web UI from the project root:
+
+```bash
+streamlit run app/frontend/streamlit_app.py
+```
+
+The page accepts PDF, TXT, and Markdown uploads, saves them under
+`data/papers/`, and exposes local retrieval and optional arXiv/GitHub search
+controls without changing the core `AIScientificAgent` workflow. User-facing
+labels, summaries, verification explanations, traces, and the generated
+`outputs/ai_scientific_agent/report_zh.md` are rendered in Chinese. The
+original `result.json` and English `report.md` remain unchanged and available
+for auditing and downstream use.
+
 The demo uses temporary isolated ScientificMemory, so running the same Quick
 Start command repeatedly does not create novelty failures from earlier demo
 runs. Application code can still use persistent `data/research_memory/`.

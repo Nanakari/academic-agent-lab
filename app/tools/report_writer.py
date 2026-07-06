@@ -96,35 +96,36 @@ class ReportWriter:
         lines.extend(["## External Evidence Retrieved", ""])
         if not external_status.get("enabled"):
             lines.append(
-                "External search was disabled; this run remained offline-first."
+                "External search was disabled; this run used only local papers "
+                "and local scientific memory."
             )
-        elif not external_evidence:
-            lines.append("No external evidence was retrieved.")
         else:
-            arxiv_items = [
-                item for item in external_evidence
-                if item.get("source_type") == "arxiv"
-            ]
-            github_items = [
-                item for item in external_evidence
-                if item.get("source_type") == "github_repo"
-            ]
-            if arxiv_items:
-                lines.extend(["", "### arXiv evidence", ""])
-                for item in arxiv_items:
-                    lines.append(
-                        f"- [{item['title']}]({item.get('url') or ''}) "
-                        f"(retrieved {item.get('retrieved_at') or 'unknown'})"
-                    )
-            if github_items:
-                lines.extend(["", "### GitHub repository evidence", ""])
-                for item in github_items:
-                    lines.append(
-                        f"- [{item['title']}]({item.get('url') or ''}) "
-                        f"(implementation evidence; retrieved "
-                        f"{item.get('retrieved_at') or 'unknown'})"
-                    )
-        if external_status.get("enabled"):
+            if not external_evidence:
+                lines.append("No external evidence was retrieved.")
+            else:
+                arxiv_items = [
+                    item for item in external_evidence
+                    if item.get("source_type") == "arxiv"
+                ]
+                github_items = [
+                    item for item in external_evidence
+                    if item.get("source_type") == "github_repo"
+                ]
+                if arxiv_items:
+                    lines.extend(["", "### arXiv evidence", ""])
+                    for item in arxiv_items:
+                        lines.append(
+                            f"- [{item['title']}]({item.get('url') or ''}) "
+                            f"(retrieved {item.get('retrieved_at') or 'unknown'})"
+                        )
+                if github_items:
+                    lines.extend(["", "### GitHub repository evidence", ""])
+                    for item in github_items:
+                        lines.append(
+                            f"- [{item['title']}]({item.get('url') or ''}) "
+                            f"(implementation evidence; retrieved "
+                            f"{item.get('retrieved_at') or 'unknown'})"
+                        )
             lines.extend([
                 "",
                 f"- Run at: {external_status.get('run_at') or 'unknown'}",
@@ -136,35 +137,33 @@ class ReportWriter:
                     "- Cache loaded at: "
                     f"{external_status.get('cache_loaded_at') or 'not used'}"
                 ),
+                "",
+                "- arXiv evidence is based on metadata / abstract-level retrieval only.",
+                (
+                    "- GitHub repository evidence indicates implementation "
+                    "availability or engineering relevance, not scientific validation."
+                ),
+                (
+                    "- External search results may change over time; retrieved_at "
+                    "is recorded for auditability."
+                ),
+                "",
+                "## External Evidence Gaps",
+                "",
             ])
-        lines.extend([
-            "",
-            "- arXiv evidence is based on metadata / abstract-level retrieval only.",
-            (
-                "- GitHub repository evidence indicates implementation availability "
-                "or engineering relevance, not scientific validation."
-            ),
-            (
-                "- External search results may change over time; retrieved_at is "
-                "recorded for auditability."
-            ),
-            "",
-            "## External Evidence Gaps",
-            "",
-        ])
-        external_gaps = result.get("external_evidence_gaps", [])
-        lines.extend(
-            [f"- {gap}" for gap in external_gaps]
-            if external_gaps
-            else ["- None recorded (external search may have been disabled)."]
-        )
-        lines.extend(["", "## External Source Warnings", ""])
-        external_warnings = result.get("external_retrieval_warnings", [])
-        lines.extend(
-            [f"- {warning}" for warning in external_warnings]
-            if external_warnings
-            else ["- None."]
-        )
+            external_gaps = result.get("external_evidence_gaps", [])
+            lines.extend(
+                [f"- {gap}" for gap in external_gaps]
+                if external_gaps
+                else ["- None recorded."]
+            )
+            lines.extend(["", "## External Source Warnings", ""])
+            external_warnings = result.get("external_retrieval_warnings", [])
+            lines.extend(
+                [f"- {warning}" for warning in external_warnings]
+                if external_warnings
+                else ["- None."]
+            )
         lines.append("")
         lines.extend(["## Evidence Gaps", ""])
         if result["evidence_gaps"]:
