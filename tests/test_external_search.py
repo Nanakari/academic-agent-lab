@@ -59,6 +59,7 @@ class ExternalProviderTests(unittest.TestCase):
         self.assertEqual(items[0].metadata["categories"], ["cs.AI"])
         self.assertEqual(items[0].query, "scientific agents")
         self.assertTrue(items[0].retrieved_at)
+        self.assertGreater(items[0].relevance_score, 0.0)
 
     def test_github_repository_is_not_scientific_validation(self) -> None:
         payload = json.dumps({"items": [{
@@ -120,6 +121,44 @@ class StubProvider:
 
 
 class ExternalEvidenceServiceTests(unittest.TestCase):
+    def test_only_relevant_retrieved_arxiv_enters_literature_context(self) -> None:
+        local = [{"excerpt": "Local evidence", "text": "Local evidence"}]
+        relevant = EvidenceItem(
+            source_type="arxiv",
+            title="Relevant paper",
+            summary="Prompt injection affects tool calling security.",
+            relevance_score=0.5,
+        )
+        irrelevant = EvidenceItem(
+            source_type="arxiv",
+            title="Irrelevant paper",
+            summary="Unrelated abstract.",
+            relevance_score=0.0,
+        )
+        rejected = EvidenceItem(
+            source_type="arxiv",
+            title="Rejected paper",
+            summary="Prompt injection security.",
+            relevance_score=0.9,
+            evidence_status="rejected",
+        )
+        github = EvidenceItem(
+            source_type="github_repo",
+            title="example/repo",
+            summary="Implementation",
+            relevance_score=1.0,
+        )
+
+        context, used = AIScientificAgent._build_literature_context(
+            local,
+            [relevant, irrelevant, rejected, github],
+        )
+
+        self.assertEqual([item.title for item in used], ["Relevant paper"])
+        self.assertEqual(len(context), 2)
+        self.assertEqual(context[1]["title"], "Relevant paper")
+        self.assertNotIn("Unrelated abstract.", [item["text"] for item in context])
+
     def test_arxiv_failure_does_not_prevent_github_result(self) -> None:
         github_item = EvidenceItem(
             source_type="github_repo",
@@ -296,6 +335,17 @@ class AgentExternalIntegrationTests(unittest.TestCase):
 
             self.assertEqual(result["external_search_status"]["enabled"], False)
             self.assertEqual(result["external_evidence"], [])
+            self.assertIn("expanded_query", result)
+            self.assertEqual(
+                result["external_evidence_used_for_literature"],
+                [],
+            )
+            self.assertEqual(
+                result["external_search_status"][
+                    "literature_external_evidence_count"
+                ],
+                0,
+            )
             saved = json.loads(
                 (output / "result.json").read_text(encoding="utf-8")
             )

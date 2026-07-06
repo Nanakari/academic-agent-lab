@@ -9,6 +9,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 from app.schemas.evidence_item import EvidenceItem
+from app.tools.query_normalizer import score_query_relevance
 
 from .base import open_url
 
@@ -68,10 +69,12 @@ class ArxivSearchService:
                 if link.attrib.get("rel") == "alternate":
                     html_url = link.attrib.get("href", html_url)
                     break
+            title = cls._clean(cls._text(entry, "atom:title", ns))
+            summary = cls._clean(cls._text(entry, "atom:summary", ns))
             items.append(EvidenceItem(
                 source_type="arxiv",
-                title=cls._clean(cls._text(entry, "atom:title", ns)),
-                summary=cls._clean(cls._text(entry, "atom:summary", ns)),
+                title=title,
+                summary=summary,
                 url=html_url,
                 authors=[
                     cls._text(author, "atom:name", ns)
@@ -87,9 +90,11 @@ class ArxivSearchService:
                     ],
                     "retrieval_scope": "metadata_and_abstract",
                     "evidence_role": "literature_discovery",
+                    "relevance_method": "lexical_query_coverage_v1",
                 },
                 query=query,
                 retrieved_at=now,
+                relevance_score=score_query_relevance(query, title, summary),
                 reliability_level="unknown",
             ))
         return items

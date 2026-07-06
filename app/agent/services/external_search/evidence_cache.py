@@ -9,7 +9,7 @@ from typing import Any
 
 
 class EvidenceCache:
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(self, cache_dir: str | Path) -> None:
         self.cache_dir = Path(cache_dir)

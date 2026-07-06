@@ -104,6 +104,7 @@ def render_chinese_summary(result: dict[str, Any]) -> str:
         "### 运行结果总览",
         "",
         f"- **研究主题：** {result.get('topic') or '未提供'}",
+        f"- **检索扩展关键词：** {result.get('expanded_query') or '未记录'}",
         f"- **任务类型：** {zh_task_type(str(result.get('task_type', 'unknown')))}",
         f"- **证据状态：** {zh_status(str(result.get('evidence_status', 'unknown')))}",
         f"- **是否通过验证：** {zh_bool(bool(result.get('verification_passed')))}",
@@ -137,6 +138,48 @@ def _verification_issues(detail: dict[str, Any]) -> list[str]:
     return [str(issue) for issue in issues] or ["未记录具体问题。"]
 
 
+def evidence_quality_messages(result: dict[str, Any]) -> list[str]:
+    """Return cautious Chinese diagnostics derived from recorded evidence."""
+    messages: list[str] = []
+    local_evidence = result.get("evidence_context") or []
+    if result.get("evidence_status") == "evidence_insufficient":
+        messages.append(
+            "本次本地证据不足。虽然系统检索到了若干论文片段，但最高证据"
+            "分数低于阈值，且支持等级为 insufficient，因此当前研究方向"
+            "只能作为探索性草案。"
+        )
+    if local_evidence and all(
+        item.get("support_level") == "insufficient"
+        for item in local_evidence
+    ):
+        messages.append(
+            "所有本地证据均为 insufficient，建议补充更直接相关的论文，"
+            "例如 indirect prompt injection、tool-use security、"
+            "computer-use agent security、MCP governance 等方向。"
+        )
+    external_evidence = result.get("external_evidence") or []
+    if any(
+        float(item.get("relevance_score") or 0.0) == 0.0
+        for item in external_evidence
+    ):
+        messages.append(
+            "部分外部检索结果相关性分数为 0，中文报告仅将其作为检索记录，"
+            "不应将其视为支持该研究方向的证据。"
+        )
+    external_status = result.get("external_search_status") or {}
+    external_used = result.get("external_evidence_used_for_literature") or []
+    if (
+        external_status.get("enabled")
+        and external_evidence
+        and not external_used
+    ):
+        messages.append(
+            "外部检索结果已记录，但由于相关性不足，未用于文献分析和"
+            "研究空白生成。"
+        )
+    return messages
+
+
 def render_chinese_markdown_report(result: dict[str, Any]) -> str:
     lines = [
         "# AI 科研 Agent 中文报告",
@@ -144,6 +187,7 @@ def render_chinese_markdown_report(result: dict[str, Any]) -> str:
         "## 一、任务概览",
         "",
         f"- **研究主题：** {result.get('topic') or '未提供'}",
+        f"- **检索扩展关键词：** {result.get('expanded_query') or '未记录'}",
         f"- **任务类型：** {zh_task_type(str(result.get('task_type', 'unknown')))}",
         f"- **证据状态：** {zh_status(str(result.get('evidence_status', 'unknown')))}",
         f"- **是否通过验证：** {zh_bool(bool(result.get('verification_passed')))}",
@@ -164,7 +208,20 @@ def render_chinese_markdown_report(result: dict[str, Any]) -> str:
     else:
         lines.append("- 未生成研究计划。")
 
-    lines.extend(["", "## 三、检索到的证据", ""])
+    lines.extend([
+        "",
+        "## 三、检索到的证据",
+        "",
+        "### 证据质量判断",
+        "",
+    ])
+    quality_messages = evidence_quality_messages(result)
+    lines.extend(
+        [f"- {message}" for message in quality_messages]
+        if quality_messages
+        else ["- 当前轻量检查未发现需要额外提示的证据质量问题。"]
+    )
+    lines.extend(["", "### 本地证据", ""])
     evidence_context = result.get("evidence_context") or []
     if not evidence_context:
         lines.append("- 未检索到相关本地证据。")

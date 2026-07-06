@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import unittest
 
 from app.frontend.chinese_renderer import (
+    evidence_quality_messages,
     render_chinese_markdown_report,
     render_chinese_summary,
     verification_failure_summary,
@@ -63,7 +65,11 @@ def sample_result() -> dict:
             "implementation_notes": ["Pin versions"],
         },
         "verification": {
-            "evidence": {"passed": True, "score": 0.8, "issues": []},
+            "evidence": {
+                "passed": False,
+                "score": 0.1,
+                "issues": ["Evidence is insufficient."],
+            },
             "novelty": {
                 "passed": False,
                 "score": 0.2,
@@ -98,7 +104,7 @@ class ChineseMappingTests(unittest.TestCase):
         summary = render_chinese_summary(sample_result())
 
         self.assertIn("科研 Agent 长期记忆去重", summary)
-        self.assertIn("主要失败项：新颖性验证", summary)
+        self.assertIn("主要失败项：证据验证、新颖性验证", summary)
         self.assertIn("已有想法过于相似", summary)
         self.assertIn(
             "新颖性验证",
@@ -125,7 +131,34 @@ class ChineseReportTests(unittest.TestCase):
             self.assertIn(heading, report)
         self.assertIn("外部检索未启用", report)
         self.assertIn("当前研究想法与历史记忆中的已有想法相似度较高", report)
+        self.assertIn("本次本地证据不足", report)
         self.assertIn("不替代 result.json", report)
+
+    def test_novelty_warning_only_appears_when_novelty_fails(self) -> None:
+        result = sample_result()
+        failed_report = render_chinese_markdown_report(result)
+        result["verification"]["novelty"]["passed"] = True
+        passed_report = render_chinese_markdown_report(result)
+
+        warning = "当前研究想法与历史记忆中的已有想法相似度较高"
+        self.assertIn(warning, failed_report)
+        self.assertNotIn(warning, passed_report)
+
+    def test_zero_relevance_external_results_are_cautioned(self) -> None:
+        result = deepcopy(sample_result())
+        result["external_search_status"] = {"enabled": True}
+        result["external_evidence"] = [{
+            "source_type": "arxiv",
+            "title": "Unrelated result",
+            "relevance_score": 0.0,
+        }]
+        result["external_evidence_used_for_literature"] = []
+
+        messages = evidence_quality_messages(result)
+        report = render_chinese_markdown_report(result)
+
+        self.assertTrue(any("相关性分数为 0" in item for item in messages))
+        self.assertIn("由于相关性不足，未用于文献分析", report)
 
 
 if __name__ == "__main__":

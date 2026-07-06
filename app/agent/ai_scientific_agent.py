@@ -22,10 +22,11 @@ from app.agent.services.external_search import (
 from app.memory.scientific_memory import ScientificMemory
 from app.planner.research_planner import ResearchPlanner
 from app.schema import AgentState
-from app.schemas.evidence_item import ExternalEvidenceResult
+from app.schemas.evidence_item import EvidenceItem, ExternalEvidenceResult
 from app.tools.experiment_designer import ExperimentDesigner
 from app.tools.paper_analyzer import PaperAnalyzer
 from app.tools.paper_corpus import PaperCorpusIndexer
+from app.tools.query_normalizer import normalize_research_query
 from app.tools.report_writer import ReportWriter
 from app.tools.research_idea_generator import ResearchIdeaGenerator
 
@@ -141,10 +142,17 @@ class AIScientificAgent(BaseAgent):
             plan = self.planner.create_plan(user_query, task_type)
             self.current_step = 1
 
-            evidence_context = self._retrieve_evidence(user_query, self.top_k)
+            expanded_query = normalize_research_query(user_query)
+            evidence_context = self._retrieve_evidence(
+                expanded_query,
+                self.top_k,
+            )
             self.current_step = 2
             planned_external_queries = (
-                self.external_query_builder.build_queries(user_query, max_queries=1)
+                self.external_query_builder.build_queries(
+                    expanded_query,
+                    max_queries=1,
+                )
                 if self.external_search_enabled
                 else []
             )
@@ -190,20 +198,12 @@ class AIScientificAgent(BaseAgent):
                     )
                 )
                 trace_step_offset = 1
-            # arXiv abstracts may inform literature discovery. GitHub repositories
-            # remain engineering evidence and never enter scientific verification.
-            literature_context = [
-                *evidence_context,
-                *[
-                    {
-                        "excerpt": item.summary,
-                        "text": item.summary,
-                        "section": "Abstract",
-                    }
-                    for item in external_result.evidence_items
-                    if item.source_type == "arxiv"
-                ],
-            ]
+            literature_context, external_literature_evidence = (
+                self._build_literature_context(
+                    evidence_context,
+                    external_result.evidence_items,
+                )
+            )
             literature_analysis = self._analyze_evidence(literature_context)
             self.current_step = 3
             agent_trace.append(
@@ -231,7 +231,7 @@ class AIScientificAgent(BaseAgent):
                 literature_analysis,
                 history,
                 ideas,
-                topic=user_query,
+                topic=expanded_query,
             )
             self.current_step = 5
 
@@ -261,7 +261,7 @@ class AIScientificAgent(BaseAgent):
                     literature_analysis,
                     history,
                     ideas,
-                    topic=user_query,
+                    topic=expanded_query,
                 )
             self.current_step = 6
             agent_trace.append(
@@ -321,6 +321,18 @@ class AIScientificAgent(BaseAgent):
                         "Only metadata/abstract-level arXiv evidence was retrieved; "
                         "full-text verification was not performed."
                     )
+                    if (
+                        any(
+                            item.source_type == "arxiv"
+                            for item in external_result.evidence_items
+                        )
+                        and not external_literature_evidence
+                    ):
+                        external_evidence_gaps.append(
+                            "External search results were recorded but excluded "
+                            "from literature analysis because they did not meet "
+                            "the relevance threshold."
+                        )
                 if "github" in self.external_search_sources:
                     external_evidence_gaps.append(
                         "GitHub repositories are implementation evidence, not "
@@ -329,6 +341,7 @@ class AIScientificAgent(BaseAgent):
             result = {
                 "agent": self.name,
                 "topic": user_query.strip(),
+                "expanded_query": expanded_query,
                 "task_type": task_type.value,
                 "plan": plan.to_dict(),
                 "evidence_context": evidence_context,
@@ -352,6 +365,9 @@ class AIScientificAgent(BaseAgent):
                         else []
                     ),
                     "sources_used": list(external_result.sources_used),
+                    "literature_external_evidence_count": len(
+                        external_literature_evidence
+                    ),
                 },
                 "external_search_queries": external_queries,
                 "external_search_query_by_source": dict(
@@ -359,6 +375,9 @@ class AIScientificAgent(BaseAgent):
                 ),
                 "external_evidence": [
                     item.to_dict() for item in external_result.evidence_items
+                ],
+                "external_evidence_used_for_literature": [
+                    item.to_dict() for item in external_literature_evidence
                 ],
                 "external_sources_used": sorted({
                     item.source_type for item in external_result.evidence_items
@@ -406,6 +425,35 @@ class AIScientificAgent(BaseAgent):
     def _analyze_evidence(self, evidence_context: list[dict]) -> dict:
         """Compatibility wrapper around LiteratureAnalysisService."""
         return self.literature_analysis_service.analyze(evidence_context)
+
+    @staticmethod
+    def _build_literature_context(
+        local_evidence: list[dict],
+        external_evidence: list[EvidenceItem],
+    ) -> tuple[list[dict], list[EvidenceItem]]:
+        """Admit only relevant arXiv abstracts to literature discovery."""
+        selected_external = [
+            item
+            for item in external_evidence
+            if (
+                item.source_type == "arxiv"
+                and item.evidence_status == "retrieved"
+                and float(item.relevance_score or 0.0) >= 0.15
+            )
+        ]
+        literature_context = [
+            *local_evidence,
+            *[
+                {
+                    "title": item.title,
+                    "excerpt": item.summary,
+                    "text": item.summary,
+                    "section": "Abstract",
+                }
+                for item in selected_external
+            ],
+        ]
+        return literature_context, selected_external
 
     @staticmethod
     def _revise_once(idea, experiment_plan, evidence_context):
