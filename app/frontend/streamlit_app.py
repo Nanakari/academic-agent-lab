@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import sys
 from typing import Any
@@ -18,6 +17,7 @@ from app.agent.ai_scientific_agent import AIScientificAgent
 from app.frontend.chinese_renderer import (
     render_chinese_markdown_report,
     render_chinese_summary,
+    novelty_display_messages,
     verification_failure_summary,
     zh_bool,
     zh_decision,
@@ -25,6 +25,7 @@ from app.frontend.chinese_renderer import (
     zh_task_type,
     zh_verification_name,
 )
+from app.frontend.result_artifacts import read_result_json_bytes
 
 
 PAPERS_DIR = PROJECT_ROOT / "data" / "papers"
@@ -188,11 +189,9 @@ def _render_verification(result: dict[str, Any]) -> None:
                     st.markdown(f"  - {issue}")
             else:
                 st.markdown("  - 未记录具体问题。")
-            if name == "novelty" and not detail.get("passed", False):
-                st.warning(
-                    "当前研究想法与历史记忆中的已有想法相似度较高，"
-                    "因此不应直接作为高新颖性方向使用。"
-                )
+            if name == "novelty":
+                for severity, message in novelty_display_messages(detail):
+                    getattr(st, severity)(message)
 
 
 def _render_trace(result: dict[str, Any]) -> None:
@@ -218,7 +217,7 @@ def _render_trace(result: dict[str, Any]) -> None:
 def _render_result(
     result: dict[str, Any],
     chinese_report: str,
-    result_json: bytes,
+    result_json: bytes | None,
 ) -> None:
     st.success("Agent 运行完成。")
     task_column, evidence_column, verification_column = st.columns(3)
@@ -290,12 +289,17 @@ def _render_result(
         )
     with tabs[7]:
         st.json(result)
-        st.download_button(
-            "下载原始 JSON result.json",
-            data=result_json,
-            file_name="result.json",
-            mime="application/json",
-        )
+        if result_json is None:
+            st.warning(
+                "未找到磁盘上的 result.json 文件，无法提供原始 JSON 下载。"
+            )
+        else:
+            st.download_button(
+                "下载原始 JSON result.json",
+                data=result_json,
+                file_name="result.json",
+                mime="application/json",
+            )
 
 
 def main() -> None:
@@ -389,15 +393,7 @@ def main() -> None:
                     )
                     report_zh_path.write_text(chinese_report, encoding="utf-8")
                     result_path = Path(result["output_paths"]["json"])
-                    result_json = (
-                        result_path.read_bytes()
-                        if result_path.exists()
-                        else json.dumps(
-                            result,
-                            ensure_ascii=False,
-                            indent=2,
-                        ).encode("utf-8")
-                    )
+                    result_json = read_result_json_bytes(result_path)
                 st.session_state["agent_result"] = result
                 st.session_state["agent_report_zh"] = chinese_report
                 st.session_state["agent_result_json"] = result_json
@@ -409,7 +405,7 @@ def main() -> None:
         _render_result(
             st.session_state["agent_result"],
             st.session_state.get("agent_report_zh", ""),
-            st.session_state.get("agent_result_json", b"{}"),
+            st.session_state.get("agent_result_json"),
         )
 
 

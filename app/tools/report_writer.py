@@ -164,6 +164,31 @@ class ReportWriter:
                 if external_warnings
                 else ["- None."]
             )
+            rejected_external = result.get(
+                "external_evidence_rejected_for_literature",
+                [],
+            )
+            if rejected_external:
+                lines.extend([
+                    "",
+                    "## Rejected External Evidence for Literature Analysis",
+                    "",
+                ])
+                for item in rejected_external:
+                    lines.extend([
+                        f"### {item.get('title') or 'Untitled external result'}",
+                        "",
+                        (
+                            f"- Source Type: "
+                            f"{item.get('source_type') or 'unknown'}"
+                        ),
+                        (
+                            f"- Relevance Score: "
+                            f"{float(item.get('relevance_score') or 0.0):.3f}"
+                        ),
+                        f"- Rejection Reason: {item.get('reason') or 'Not recorded.'}",
+                        "",
+                    ])
         lines.append("")
         lines.extend(["## Evidence Gaps", ""])
         if result["evidence_gaps"]:

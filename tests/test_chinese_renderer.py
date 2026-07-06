@@ -7,6 +7,7 @@ import unittest
 
 from app.frontend.chinese_renderer import (
     evidence_quality_messages,
+    novelty_display_messages,
     render_chinese_markdown_report,
     render_chinese_summary,
     verification_failure_summary,
@@ -125,6 +126,30 @@ class ChineseMappingTests(unittest.TestCase):
             "新颖性验证",
             verification_failure_summary(sample_result()),
         )
+
+    def test_novelty_messages_separate_local_and_literature_status(self) -> None:
+        detail = sample_result()["verification"]["novelty"]
+
+        messages = novelty_display_messages(detail)
+        text = " ".join(message for _, message in messages)
+
+        self.assertIn("只是本地去重提醒", text)
+        self.assertIn("无法可靠判断学术新颖性", text)
+        self.assertNotIn(
+            "因为本地历史重复导致学术新颖性失败",
+            text,
+        )
+
+    def test_potentially_distinct_message_requires_human_review(self) -> None:
+        messages = novelty_display_messages({
+            "passed": True,
+            "local_memory_overlap": {"has_overlap": False},
+            "literature_novelty": {"status": "potentially_distinct"},
+        })
+
+        self.assertEqual(messages[0][0], "info")
+        self.assertIn("轻量启发式判断", messages[0][1])
+        self.assertIn("仍需人工复核", messages[0][1])
 
 
 class ChineseReportTests(unittest.TestCase):

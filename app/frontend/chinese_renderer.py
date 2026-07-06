@@ -104,6 +104,39 @@ def verification_failure_summary(result: dict[str, Any]) -> str:
     return summary
 
 
+def novelty_display_messages(detail: dict[str, Any]) -> list[tuple[str, str]]:
+    """Return UI severity/message pairs for the versioned novelty structure."""
+    messages: list[tuple[str, str]] = []
+    local_overlap = detail.get("local_memory_overlap") or {}
+    if local_overlap.get("has_overlap"):
+        messages.append((
+            "warning",
+            "检测到当前想法与本地历史草案相似。这只是本地去重提醒，"
+            "不等同于学术界已有工作重复，也不会单独导致学术新颖性失败。",
+        ))
+    literature_status = (
+        detail.get("literature_novelty", {}).get("status")
+    )
+    if literature_status == "insufficient_literature_evidence":
+        messages.append((
+            "warning",
+            "当前缺少足够的最新论文、benchmark、method 或 survey 对比，"
+            "因此无法可靠判断学术新颖性。",
+        ))
+    elif literature_status == "overlapping":
+        messages.append((
+            "error",
+            "当前方向与已有论文或已有方法高度重叠，学术新颖性风险较高。",
+        ))
+    elif literature_status == "potentially_distinct":
+        messages.append((
+            "info",
+            "当前方向相对已有方法具有一定机制差异，但这只是轻量启发式"
+            "判断，仍需人工复核最新文献。",
+        ))
+    return messages
+
+
 def render_chinese_summary(result: dict[str, Any]) -> str:
     novelty = (result.get("verification") or {}).get("novelty") or {}
     literature_status = (
@@ -451,7 +484,7 @@ def render_chinese_markdown_report(result: dict[str, Any]) -> str:
             if literature_novelty.get("status") == "potentially_distinct":
                 lines.extend([
                     "> 当前方向相对已有方法具有一定机制差异，"
-                    "但仍需人工复核最新文献。",
+                    "但这只是轻量启发式判断，仍需人工复核最新文献。",
                     "",
                 ])
 

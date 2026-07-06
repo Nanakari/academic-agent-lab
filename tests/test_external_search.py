@@ -437,8 +437,22 @@ class AgentExternalIntegrationTests(unittest.TestCase):
             )
 
             result = agent.run("scientific verifier unsupported claims")
+            report = (root / "outputs" / "report.md").read_text(
+                encoding="utf-8"
+            )
 
         self.assertEqual(len(result["external_evidence"]), 1)
+        self.assertEqual(result["external_evidence_used_for_literature"], [])
+        self.assertEqual(
+            len(result["external_evidence_rejected_for_literature"]),
+            1,
+        )
+        self.assertIn(
+            "## Rejected External Evidence for Literature Analysis",
+            report,
+        )
+        self.assertIn("Strong external result", report)
+        self.assertIn("Rejection Reason", report)
         self.assertFalse(result["verification"]["evidence"]["passed"])
         self.assertFalse(result["verification_passed"])
 
