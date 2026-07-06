@@ -7,6 +7,7 @@ from app.schemas.evidence import (
     PaperDocument,
     support_level_for_score,
 )
+from app.schemas.evidence_item import EvidenceItem, ExternalEvidenceResult
 from app.schemas.evaluation import EvalCase, EvalCaseResult, EvalMetrics
 from app.schemas.experiment_blueprint import ExperimentBlueprint
 from app.schemas.experiment_plan import ExperimentPlan
@@ -21,10 +22,12 @@ __all__ = [
     "ExperimentPlan",
     "ExperimentBlueprint",
     "EvidenceChunk",
+    "EvidenceItem",
     "EvalCase",
     "EvalCaseResult",
     "EvalMetrics",
     "FeasibilityAssessment",
+    "ExternalEvidenceResult",
     "PaperChunk",
     "PaperDocument",
     "ResearchDirection",

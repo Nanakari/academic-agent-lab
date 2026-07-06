@@ -15,9 +15,14 @@ from app.agent.services import (
     ResearchDirectionService,
     VerificationPipeline,
 )
+from app.agent.services.external_search import (
+    ExternalEvidenceService,
+    ExternalSearchQueryBuilder,
+)
 from app.memory.scientific_memory import ScientificMemory
 from app.planner.research_planner import ResearchPlanner
 from app.schema import AgentState
+from app.schemas.evidence_item import ExternalEvidenceResult
 from app.tools.experiment_designer import ExperimentDesigner
 from app.tools.paper_analyzer import PaperAnalyzer
 from app.tools.paper_corpus import PaperCorpusIndexer
@@ -38,6 +43,12 @@ class AIScientificAgent(BaseAgent):
         llm=None,
         strict_domain: bool | None = None,
         domain_mode: str = "off",
+        external_search_enabled: bool = False,
+        external_search_sources: list[str] | None = None,
+        external_max_results_per_source: int = 5,
+        external_cache_enabled: bool = True,
+        external_force_refresh: bool = False,
+        external_evidence_service: ExternalEvidenceService | None = None,
     ) -> None:
         super().__init__(name="AIScientificAgent", max_steps=8)
         self.project_root = (
@@ -57,6 +68,20 @@ class AIScientificAgent(BaseAgent):
             else (self.project_root / requested_papers_dir).resolve()
         )
         self.top_k = max(1, int(top_k))
+        self.external_search_enabled = bool(external_search_enabled)
+        requested_external_sources = (
+            ["arxiv", "github"]
+            if external_search_sources is None
+            else external_search_sources
+        )
+        self.external_search_sources = [
+            source.casefold()
+            for source in requested_external_sources
+            if source.casefold() in {"arxiv", "github"}
+        ]
+        self.external_max_results_per_source = max(
+            1, int(external_max_results_per_source)
+        )
         self.scientific_memory = memory or ScientificMemory(
             self.project_root / "data" / "research_memory"
         )
@@ -77,6 +102,14 @@ class AIScientificAgent(BaseAgent):
             self.project_root,
             self.paper_corpus,
             self.scientific_memory,
+        )
+        self.external_query_builder = ExternalSearchQueryBuilder()
+        self.external_evidence_service = external_evidence_service or (
+            ExternalEvidenceService(
+                cache_dir=self.project_root / "data" / "external_cache",
+                cache_enabled=external_cache_enabled,
+                force_refresh=external_force_refresh,
+            )
         )
         self.verification_pipeline = VerificationPipeline(
             domain_mode=domain_mode,
@@ -110,7 +143,42 @@ class AIScientificAgent(BaseAgent):
 
             evidence_context = self._retrieve_evidence(user_query, self.top_k)
             self.current_step = 2
-            literature_analysis = self._analyze_evidence(evidence_context)
+            external_queries = (
+                self.external_query_builder.build_queries(user_query)
+                if self.external_search_enabled
+                else []
+            )
+            external_query = (
+                external_queries[0] if external_queries else user_query.strip()
+            )
+            if self.external_search_enabled:
+                external_result = self.external_evidence_service.retrieve(
+                    external_query,
+                    use_arxiv="arxiv" in self.external_search_sources,
+                    use_github="github" in self.external_search_sources,
+                    max_results_per_source=self.external_max_results_per_source,
+                )
+            else:
+                external_result = ExternalEvidenceResult(
+                    enabled=False,
+                    query=external_query,
+                    retrieved_at="",
+                )
+            # arXiv abstracts may inform literature discovery. GitHub repositories
+            # remain engineering evidence and never enter scientific verification.
+            literature_context = [
+                *evidence_context,
+                *[
+                    {
+                        "excerpt": item.summary,
+                        "text": item.summary,
+                        "section": "Abstract",
+                    }
+                    for item in external_result.evidence_items
+                    if item.source_type == "arxiv"
+                ],
+            ]
+            literature_analysis = self._analyze_evidence(literature_context)
             self.current_step = 3
             agent_trace.append(
                 self.decision_policy.decide_after_evidence(
@@ -220,6 +288,18 @@ class AIScientificAgent(BaseAgent):
                     selected_idea=selected_idea.to_dict(),
                 )
             )
+            external_evidence_gaps = []
+            if self.external_search_enabled:
+                if "arxiv" in self.external_search_sources:
+                    external_evidence_gaps.append(
+                        "Only metadata/abstract-level arXiv evidence was retrieved; "
+                        "full-text verification was not performed."
+                    )
+                if "github" in self.external_search_sources:
+                    external_evidence_gaps.append(
+                        "GitHub repositories are implementation evidence, not "
+                        "scientific validation."
+                    )
             result = {
                 "agent": self.name,
                 "topic": user_query.strip(),
@@ -231,6 +311,26 @@ class AIScientificAgent(BaseAgent):
                 "evidence_gaps": evidence_assessment["gaps"],
                 "unsupported_claims": evidence_assessment["unsupported_claims"],
                 "corpus_warnings": list(self.paper_corpus.warnings),
+                "external_search_status": {
+                    "enabled": external_result.enabled,
+                    "retrieved_at": external_result.retrieved_at,
+                    "cache_used": external_result.cache_used,
+                    "sources_requested": (
+                        list(self.external_search_sources)
+                        if self.external_search_enabled
+                        else []
+                    ),
+                    "sources_used": list(external_result.sources_used),
+                },
+                "external_search_queries": external_queries,
+                "external_evidence": [
+                    item.to_dict() for item in external_result.evidence_items
+                ],
+                "external_sources_used": sorted({
+                    item.source_type for item in external_result.evidence_items
+                }),
+                "external_evidence_gaps": external_evidence_gaps,
+                "external_retrieval_warnings": list(external_result.warnings),
                 "literature_analysis": literature_analysis,
                 "candidate_ideas": [idea.to_dict() for idea in ideas],
                 "research_directions": [

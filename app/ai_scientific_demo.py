@@ -34,11 +34,49 @@ def build_parser() -> argparse.ArgumentParser:
         default=5,
         help="Maximum number of evidence chunks to retrieve (default: 5).",
     )
+    external = parser.add_mutually_exclusive_group()
+    external.add_argument(
+        "--use-external-search",
+        action="store_true",
+        help="Opt in to controlled arXiv/GitHub metadata retrieval.",
+    )
+    external.add_argument(
+        "--no-external-search",
+        action="store_true",
+        help="Explicitly keep the default offline-only behavior.",
+    )
+    parser.add_argument(
+        "--external-sources",
+        default="arxiv,github",
+        help="Comma-separated subset of arxiv,github (default: both).",
+    )
+    parser.add_argument(
+        "--external-max-results",
+        type=int,
+        default=5,
+        help="Maximum external results per requested source (default: 5).",
+    )
+    parser.add_argument(
+        "--external-force-refresh",
+        action="store_true",
+        help="Ignore existing external evidence cache entries.",
+    )
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
+    external_sources = [
+        value.strip().casefold()
+        for value in args.external_sources.split(",")
+        if value.strip()
+    ]
+    invalid_sources = sorted(set(external_sources) - {"arxiv", "github"})
+    if invalid_sources:
+        raise SystemExit(
+            "Unsupported --external-sources value(s): "
+            + ", ".join(invalid_sources)
+        )
     # Demo runs are intentionally isolated so repeated Quick Start commands are
     # reproducible and do not pollute the project's long-lived scientific memory.
     with tempfile.TemporaryDirectory(prefix="ai-scientific-demo-") as temp:
@@ -48,6 +86,12 @@ def main() -> None:
             papers_dir=Path(args.papers_dir),
             top_k=args.top_k,
             memory=ScientificMemory(Path(temp) / "memory"),
+            external_search_enabled=(
+                args.use_external_search and not args.no_external_search
+            ),
+            external_search_sources=external_sources,
+            external_max_results_per_source=args.external_max_results,
+            external_force_refresh=args.external_force_refresh,
         )
         result = agent.run(args.topic)
     print(json.dumps(
@@ -55,6 +99,8 @@ def main() -> None:
             "task_type": result["task_type"],
             "evidence_status": result["evidence_status"],
             "evidence_count": len(result["evidence_context"]),
+            "external_search_status": result["external_search_status"],
+            "external_evidence_count": len(result["external_evidence"]),
             "verification_passed": result["verification_passed"],
             "output_paths": result["output_paths"],
         },

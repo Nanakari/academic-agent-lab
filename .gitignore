@@ -19,6 +19,7 @@ data/research_memory/*
 !data/research_memory/.gitkeep
 data/papers/*
 !data/papers/.gitkeep
+data/external_cache/
 
 # IDE files
 .vscode/

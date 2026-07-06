@@ -1,8 +1,7 @@
 # academic-agent-lab
 
-academic-agent-lab is a lightweight AI Scientific Agent for AI paper analysis,
-evidence-grounded research idea generation, experiment planning, and
-verifier-based reliability checking.
+academic-agent-lab is a lightweight, offline-first, verifier-driven
+pre-experiment scientific agent MVP with optional external evidence retrieval.
 
 ## Project Overview
 
@@ -90,6 +89,8 @@ More detail is available in [architecture.md](docs/architecture.md) and
 
 - **Paper parsing:** TXT, Markdown, and text-based PDF support
 - **Local evidence retrieval:** explainable keyword-based paper search
+- **Optional external evidence:** controlled arXiv metadata/abstract and GitHub
+  repository retrieval with a local audit cache
 - **Structured evidence citation:** paper, section/page, chunk, keywords, and
   support level
 - **Research idea generation:** three ranked, testable candidate ideas
@@ -213,6 +214,54 @@ back to these chunks under:
 
 These citations are lightweight local provenance records, not formal BibTeX
 references.
+
+### External Evidence Retrieval
+
+The agent can optionally retrieve external evidence from arXiv and GitHub.
+External search is disabled by default, so the normal pipeline remains
+offline-first:
+
+```bash
+python app/ai_scientific_demo.py \
+  --topic "scientific agent verifier" \
+  --use-external-search
+```
+
+Available controls are:
+
+```text
+--use-external-search
+--no-external-search
+--external-sources arxiv,github
+--external-max-results 5
+--external-force-refresh
+```
+
+GitHub repository search works without authentication but is more
+rate-limited. To authenticate:
+
+```bash
+export GITHUB_TOKEN=...
+```
+
+Windows PowerShell:
+
+```powershell
+$env:GITHUB_TOKEN="..."
+```
+
+External results are cached as JSON below `data/external_cache/`. Cached
+records include the query, source, retrieval time, normalized items, and
+warnings so a run can be audited and repeated. Network or cache failures are
+reported in `result.json` and `report.md` and do not stop the local pipeline.
+
+Limitations:
+
+- arXiv retrieval is metadata / abstract-level only; PDFs are not downloaded.
+- GitHub repositories indicate implementation availability or engineering
+  relevance and are never treated as scientific proof.
+- External results can change over time; `retrieved_at` is recorded.
+- No repository is cloned and no external code or experiment is executed.
 
 ## Evaluation Mode
 

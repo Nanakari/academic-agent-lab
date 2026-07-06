@@ -3,3 +3,10 @@ model = "gemini-3.1-flash-lite"
 api_key = ""
 temperature = 0.0
 max_tokens = 1024
+
+[external_search]
+enabled = false
+sources = ["arxiv", "github"]
+max_results_per_source = 5
+cache_enabled = true
+force_refresh = false

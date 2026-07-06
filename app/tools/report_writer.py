@@ -91,6 +91,68 @@ class ReportWriter:
                     ),
                 ])
             lines.append("")
+        external_status = result.get("external_search_status", {"enabled": False})
+        external_evidence = result.get("external_evidence", [])
+        lines.extend(["## External Evidence Retrieved", ""])
+        if not external_status.get("enabled"):
+            lines.append(
+                "External search was disabled; this run remained offline-first."
+            )
+        elif not external_evidence:
+            lines.append("No external evidence was retrieved.")
+        else:
+            arxiv_items = [
+                item for item in external_evidence
+                if item.get("source_type") == "arxiv"
+            ]
+            github_items = [
+                item for item in external_evidence
+                if item.get("source_type") == "github_repo"
+            ]
+            if arxiv_items:
+                lines.extend(["", "### arXiv evidence", ""])
+                for item in arxiv_items:
+                    lines.append(
+                        f"- [{item['title']}]({item.get('url') or ''}) "
+                        f"(retrieved {item.get('retrieved_at') or 'unknown'})"
+                    )
+            if github_items:
+                lines.extend(["", "### GitHub repository evidence", ""])
+                for item in github_items:
+                    lines.append(
+                        f"- [{item['title']}]({item.get('url') or ''}) "
+                        f"(implementation evidence; retrieved "
+                        f"{item.get('retrieved_at') or 'unknown'})"
+                    )
+        lines.extend([
+            "",
+            "- arXiv evidence is based on metadata / abstract-level retrieval only.",
+            (
+                "- GitHub repository evidence indicates implementation availability "
+                "or engineering relevance, not scientific validation."
+            ),
+            (
+                "- External search results may change over time; retrieved_at is "
+                "recorded for auditability."
+            ),
+            "",
+            "## External Evidence Gaps",
+            "",
+        ])
+        external_gaps = result.get("external_evidence_gaps", [])
+        lines.extend(
+            [f"- {gap}" for gap in external_gaps]
+            if external_gaps
+            else ["- None recorded (external search may have been disabled)."]
+        )
+        lines.extend(["", "## External Source Warnings", ""])
+        external_warnings = result.get("external_retrieval_warnings", [])
+        lines.extend(
+            [f"- {warning}" for warning in external_warnings]
+            if external_warnings
+            else ["- None."]
+        )
+        lines.append("")
         lines.extend(["## Evidence Gaps", ""])
         if result["evidence_gaps"]:
             lines.extend(f"- {gap}" for gap in result["evidence_gaps"])
@@ -426,7 +488,11 @@ class ReportWriter:
             "",
             "## Limitations",
             "",
-            "- Evidence is limited to data/papers and saved scientific memory.",
+            (
+                "- Scientific verification is limited to local papers and saved "
+                "scientific memory; external evidence does not automatically "
+                "validate claims."
+            ),
             "- Retrieval uses lightweight lexical overlap rather than semantic embeddings.",
             "- Idea generation and ranking use lightweight heuristics in this MVP.",
             "- Benchmark and baseline choices must be checked against the latest literature before execution.",
