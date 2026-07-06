@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+import re
 
 from app.memory.scientific_memory import ScientificMemory
 from app.schemas.evidence import support_level_for_score
@@ -25,12 +27,13 @@ class EvidenceService:
         self.project_root = Path(project_root).resolve()
         self.paper_corpus = paper_corpus
         self.memory = memory
+        self.last_deduplicated_count = 0
 
     def retrieve(self, query: str, top_k: int = 5) -> list[dict]:
         """Search papers first, then fill available slots from paper-note memory."""
         limit = max(1, int(top_k))
         selected = []
-        for evidence in self.paper_corpus.search(query, top_k=limit):
+        for evidence in self.paper_corpus.search(query, top_k=limit * 3):
             item = evidence.to_dict()
             source_path = Path(item["source_path"])
             try:
@@ -46,13 +49,69 @@ class EvidenceService:
             )
             selected.append(item)
 
+        selected, local_duplicates = self._deduplicate(selected)
+        selected = selected[:limit]
         remaining = limit - len(selected)
         if remaining > 0:
             selected.extend(self._search_memory(query, remaining))
+        selected, combined_duplicates = self._deduplicate(selected)
+        selected = selected[:limit]
+        self.last_deduplicated_count = (
+            local_duplicates + combined_duplicates
+        )
 
         for index, item in enumerate(selected, start=1):
             item["evidence_id"] = f"E{index}"
         return selected
+
+    @classmethod
+    def _deduplicate(cls, evidence_items: list[dict]) -> tuple[list[dict], int]:
+        """Deduplicate result records without touching source files."""
+        positions: dict[tuple, int] = {}
+        deduplicated: list[dict] = []
+        duplicate_count = 0
+        for item in evidence_items:
+            key = cls._deduplication_key(item)
+            if key not in positions:
+                positions[key] = len(deduplicated)
+                deduplicated.append(item)
+                continue
+            duplicate_count += 1
+            position = positions[key]
+            if float(item.get("score", 0.0)) > float(
+                deduplicated[position].get("score", 0.0)
+            ):
+                deduplicated[position] = item
+        deduplicated.sort(
+            key=lambda item: float(item.get("score", 0.0)),
+            reverse=True,
+        )
+        return deduplicated, duplicate_count
+
+    @staticmethod
+    def _deduplication_key(item: dict) -> tuple:
+        normalized_title = re.sub(
+            r"[^a-z0-9\u4e00-\u9fff]+",
+            "",
+            str(item.get("title") or "").casefold(),
+        )
+        section = str(item.get("section") or "").strip().casefold()
+        claim = str(
+            item.get("supporting_claim")
+            or item.get("excerpt")
+            or item.get("text")
+            or ""
+        )
+        normalized_claim = re.sub(r"\s+", " ", claim).strip().casefold()
+        claim_hash = hashlib.sha256(
+            normalized_claim.encode("utf-8")
+        ).hexdigest()[:16]
+        return (
+            normalized_title,
+            item.get("page"),
+            section,
+            claim_hash,
+        )
 
     def _search_memory(self, query: str, limit: int) -> list[dict]:
         records = []

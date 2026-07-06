@@ -108,6 +108,16 @@ def _render_evidence(result: dict[str, Any]) -> None:
                     str(item.get("excerpt") or item.get("text") or "无"),
                 ])
             )
+    rejected = result.get("external_evidence_rejected_for_literature") or []
+    if rejected:
+        with st.expander("被拒绝的外部证据", expanded=False):
+            st.caption("这些结果保留用于审计，但未参与文献分析。")
+            for item in rejected:
+                st.markdown(
+                    f"- **{item.get('title') or '未命名条目'}**\n"
+                    f"  - 相关性分数：{item.get('relevance_score', 0.0)}\n"
+                    f"  - 拒绝原因：{item.get('reason') or '未记录'}"
+                )
 
 
 def _render_ideas(result: dict[str, Any]) -> None:
@@ -223,6 +233,18 @@ def _render_result(
     verification_column.metric(
         "是否通过验证",
         zh_bool(bool(result.get("verification_passed"))),
+    )
+    novelty = (result.get("verification") or {}).get("novelty") or {}
+    literature_novelty = novelty.get("literature_novelty") or {}
+    local_overlap = novelty.get("local_memory_overlap") or {}
+    novelty_column, overlap_column = st.columns(2)
+    novelty_column.metric(
+        "文献新颖性状态",
+        literature_novelty.get("status", "未记录"),
+    )
+    overlap_column.metric(
+        "本地历史草案重叠",
+        zh_bool(bool(local_overlap.get("has_overlap"))),
     )
     if not result.get("verification_passed"):
         st.warning(

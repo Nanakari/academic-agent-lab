@@ -24,6 +24,10 @@ from app.planner.research_planner import ResearchPlanner
 from app.schema import AgentState
 from app.schemas.evidence_item import EvidenceItem, ExternalEvidenceResult
 from app.tools.experiment_designer import ExperimentDesigner
+from app.tools.external_relevance import (
+    has_excluded_topic_drift,
+    is_external_evidence_relevant_to_topic,
+)
 from app.tools.paper_analyzer import PaperAnalyzer
 from app.tools.paper_corpus import PaperCorpusIndexer
 from app.tools.query_normalizer import normalize_research_query
@@ -198,13 +202,37 @@ class AIScientificAgent(BaseAgent):
                     )
                 )
                 trace_step_offset = 1
-            literature_context, external_literature_evidence = (
+            (
+                literature_context,
+                external_literature_evidence,
+                rejected_external_literature_evidence,
+            ) = (
                 self._build_literature_context(
                     evidence_context,
                     external_result.evidence_items,
+                    expanded_query,
+                    user_query.strip(),
                 )
             )
             literature_analysis = self._analyze_evidence(literature_context)
+            if has_excluded_topic_drift(
+                str(literature_analysis.get("research_gap", "")),
+                expanded_query,
+                user_query,
+            ):
+                literature_analysis = {
+                    **literature_analysis,
+                    "research_gap": (
+                        "A defensible research gap cannot be established from "
+                        "the retrieved topic-relevant evidence."
+                    ),
+                    "research_gap_status": (
+                        "insufficient_topic_relevant_evidence"
+                    ),
+                    "research_gap_note": (
+                        "The generated gap failed the topic-drift safeguard."
+                    ),
+                }
             self.current_step = 3
             agent_trace.append(
                 self.decision_policy.decide_after_evidence(
@@ -232,11 +260,16 @@ class AIScientificAgent(BaseAgent):
                 history,
                 ideas,
                 topic=expanded_query,
+                external_literature_evidence=[
+                    item.to_dict() for item in external_literature_evidence
+                ],
             )
             self.current_step = 5
 
-            revision_needed = not all(
-                item["passed"] for item in initial_verification.values()
+            revision_needed = any(
+                not item["passed"]
+                for name, item in initial_verification.items()
+                if name != "novelty"
             )
             agent_trace.append(
                 self.decision_policy.decide_before_revision(
@@ -262,6 +295,9 @@ class AIScientificAgent(BaseAgent):
                     history,
                     ideas,
                     topic=expanded_query,
+                    external_literature_evidence=[
+                        item.to_dict() for item in external_literature_evidence
+                    ],
                 )
             self.current_step = 6
             agent_trace.append(
@@ -305,6 +341,9 @@ class AIScientificAgent(BaseAgent):
             )
             verification_passed = all(
                 item["passed"] for item in verification.values()
+            )
+            novelty_revision_strategy = self._novelty_revision_strategy(
+                initial_verification.get("novelty", {})
             )
             agent_trace.append(
                 self.decision_policy.decide_before_report(
@@ -350,6 +389,9 @@ class AIScientificAgent(BaseAgent):
                 "evidence_gaps": evidence_assessment["gaps"],
                 "unsupported_claims": evidence_assessment["unsupported_claims"],
                 "corpus_warnings": list(self.paper_corpus.warnings),
+                "deduplicated_evidence_count": (
+                    self.evidence_service.last_deduplicated_count
+                ),
                 "external_search_status": {
                     "enabled": external_result.enabled,
                     "run_at": external_result.run_at,
@@ -379,6 +421,9 @@ class AIScientificAgent(BaseAgent):
                 "external_evidence_used_for_literature": [
                     item.to_dict() for item in external_literature_evidence
                 ],
+                "external_evidence_rejected_for_literature": (
+                    rejected_external_literature_evidence
+                ),
                 "external_sources_used": sorted({
                     item.source_type for item in external_result.evidence_items
                 }),
@@ -397,6 +442,7 @@ class AIScientificAgent(BaseAgent):
                 "verification": verification,
                 "verification_passed": verification_passed,
                 "revision_performed": revision_performed,
+                "novelty_revision_strategy": novelty_revision_strategy,
                 "agent_trace": [entry.to_dict() for entry in agent_trace],
                 "output_paths": {
                     "json": str((self.output_dir / "result.json").resolve()),
@@ -427,20 +473,46 @@ class AIScientificAgent(BaseAgent):
         return self.literature_analysis_service.analyze(evidence_context)
 
     @staticmethod
+    def _novelty_revision_strategy(novelty: dict) -> str:
+        literature_status = (
+            novelty.get("literature_novelty", {}).get("status")
+        )
+        local_overlap = novelty.get("local_memory_overlap", {})
+        if literature_status == "insufficient_literature_evidence":
+            return "no_sufficient_literature_novelty_evidence"
+        if literature_status == "overlapping":
+            return "literature_overlap_requires_human_review"
+        if local_overlap.get("has_overlap"):
+            return "warning_only_local_overlap"
+        return "not_required"
+
+    @staticmethod
     def _build_literature_context(
         local_evidence: list[dict],
         external_evidence: list[EvidenceItem],
-    ) -> tuple[list[dict], list[EvidenceItem]]:
+        expanded_query: str,
+        topic: str,
+    ) -> tuple[list[dict], list[EvidenceItem], list[dict]]:
         """Admit only relevant arXiv abstracts to literature discovery."""
-        selected_external = [
-            item
-            for item in external_evidence
-            if (
-                item.source_type == "arxiv"
-                and item.evidence_status == "retrieved"
-                and float(item.relevance_score or 0.0) >= 0.15
+        selected_external = []
+        rejected_external = []
+        for item in external_evidence:
+            accepted, reason = is_external_evidence_relevant_to_topic(
+                item,
+                expanded_query,
+                topic,
             )
-        ]
+            if accepted:
+                selected_external.append(item)
+            else:
+                rejected_external.append({
+                    "title": item.title,
+                    "source_type": item.source_type,
+                    "source_id": item.source_id,
+                    "url": item.url,
+                    "relevance_score": item.relevance_score,
+                    "reason": reason,
+                })
         literature_context = [
             *local_evidence,
             *[
@@ -449,11 +521,13 @@ class AIScientificAgent(BaseAgent):
                     "excerpt": item.summary,
                     "text": item.summary,
                     "section": "Abstract",
+                    "source_type": "arxiv",
+                    "source_id": item.source_id,
                 }
                 for item in selected_external
             ],
         ]
-        return literature_context, selected_external
+        return literature_context, selected_external, rejected_external
 
     @staticmethod
     def _revise_once(idea, experiment_plan, evidence_context):

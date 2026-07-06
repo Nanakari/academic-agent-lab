@@ -140,7 +140,34 @@ class AgentDecisionPolicy:
                 ),
             )
 
-        primary = self._primary_failure(failures)
+        actionable_failures = [
+            name for name in failures if name != "novelty"
+        ]
+        if not actionable_failures:
+            novelty = verification.get("novelty", {})
+            literature_status = (
+                novelty.get("literature_novelty", {}).get("status", "unknown")
+            )
+            return AgentTraceEntry(
+                step=step,
+                observation=(
+                    "Academic novelty was not confirmed. "
+                    f"literature_novelty.status={literature_status}. "
+                    "Any local memory overlap is warning-only."
+                ),
+                decision="preserve_novelty_uncertainty",
+                reason=(
+                    "A title-only or forced revision cannot establish academic "
+                    "novelty without stronger literature evidence."
+                ),
+                action="skip_automatic_novelty_revision",
+                result=(
+                    "The novelty result remains visible for human review; the "
+                    "agent will not manufacture a novel framing."
+                ),
+            )
+
+        primary = self._primary_failure(actionable_failures)
         failed_names = ", ".join(failures)
         observation = (
             f"Verifier checks failed before revision: {failed_names}. "
@@ -338,9 +365,8 @@ class AgentDecisionPolicy:
             )
         if primary == "novelty":
             return (
-                "The novelty verifier failed because the current idea overlaps "
-                "with saved or candidate ideas, so the revision should reduce "
-                "duplication."
+                "Academic novelty was not confirmed from topic-relevant "
+                "literature; local memory overlap remains warning-only."
             )
         return (
             f"An unclassified verifier failure ({primary}) was detected and "

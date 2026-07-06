@@ -149,15 +149,21 @@ class ExternalEvidenceServiceTests(unittest.TestCase):
             relevance_score=1.0,
         )
 
-        context, used = AIScientificAgent._build_literature_context(
+        context, used, rejected_items = AIScientificAgent._build_literature_context(
             local,
             [relevant, irrelevant, rejected, github],
+            (
+                "LLM agent tool security prompt injection tool calling "
+                "indirect prompt injection"
+            ),
+            "LLM Agent 工具调用安全与提示注入",
         )
 
         self.assertEqual([item.title for item in used], ["Relevant paper"])
         self.assertEqual(len(context), 2)
         self.assertEqual(context[1]["title"], "Relevant paper")
         self.assertNotIn("Unrelated abstract.", [item["text"] for item in context])
+        self.assertEqual(len(rejected_items), 3)
 
     def test_arxiv_failure_does_not_prevent_github_result(self) -> None:
         github_item = EvidenceItem(

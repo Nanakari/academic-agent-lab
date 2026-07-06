@@ -34,9 +34,14 @@ class VerificationPipeline:
         history: list[dict],
         ideas: list,
         topic: str | None = None,
+        external_literature_evidence: list[dict] | None = None,
     ) -> dict:
         claims = list(literature_analysis.get("existing_methods", []))
-        if literature_analysis.get("research_gap_status") != "insufficient_evidence":
+        if literature_analysis.get("research_gap_status") not in {
+            "insufficient_evidence",
+            "insufficient_topic_relevant_evidence",
+            "evidence_insufficient",
+        }:
             claims.insert(0, literature_analysis.get("research_gap", ""))
         claims = [claim for claim in claims if is_verifiable_claim(claim)]
         results = {
@@ -47,7 +52,13 @@ class VerificationPipeline:
                 ideas=ideas,
                 topic=topic,
             ),
-            "novelty": self.novelty_verifier.verify(idea, history),
+            "novelty": self.novelty_verifier.verify(
+                idea,
+                history,
+                literature_analysis=literature_analysis,
+                evidence_context=evidence_context,
+                external_literature_evidence=external_literature_evidence,
+            ),
             "experiment": self.experiment_verifier.verify(experiment_plan),
             "reproducibility": self.reproducibility_verifier.verify(experiment_plan),
         }
@@ -82,7 +93,11 @@ class VerificationPipeline:
             gaps.append("No matching evidence was retrieved from the local paper corpus.")
         if (
             literature_analysis
-            and literature_analysis.get("research_gap_status") == "insufficient_evidence"
+            and literature_analysis.get("research_gap_status") in {
+                "insufficient_evidence",
+                "insufficient_topic_relevant_evidence",
+                "evidence_insufficient",
+            }
         ):
             gaps.append(
                 "Research gap could not be established from retrieved evidence."

@@ -73,7 +73,22 @@ def sample_result() -> dict:
             "novelty": {
                 "passed": False,
                 "score": 0.2,
-                "issues": ["Idea overlaps with memory."],
+                "issues": [
+                    "Insufficient literature evidence to assess academic novelty."
+                ],
+                "local_memory_overlap": {
+                    "has_overlap": True,
+                    "max_similarity": 0.94,
+                    "matched_title": "Earlier memory deduplication draft",
+                    "effect": "warning_only",
+                },
+                "literature_novelty": {
+                    "status": "insufficient_literature_evidence",
+                    "risk": "unknown",
+                    "mechanism_difference": (
+                        "Insufficient literature for comparison."
+                    ),
+                },
             },
         },
         "agent_trace": [{
@@ -105,7 +120,7 @@ class ChineseMappingTests(unittest.TestCase):
 
         self.assertIn("科研 Agent 长期记忆去重", summary)
         self.assertIn("主要失败项：证据验证、新颖性验证", summary)
-        self.assertIn("已有想法过于相似", summary)
+        self.assertIn("无法可靠判断学术新颖性", summary)
         self.assertIn(
             "新颖性验证",
             verification_failure_summary(sample_result()),
@@ -130,19 +145,24 @@ class ChineseReportTests(unittest.TestCase):
         ):
             self.assertIn(heading, report)
         self.assertIn("外部检索未启用", report)
-        self.assertIn("当前研究想法与历史记忆中的已有想法相似度较高", report)
+        self.assertIn("这只是本地去重提醒", report)
+        self.assertIn("无法可靠判断学术新颖性", report)
         self.assertIn("本次本地证据不足", report)
         self.assertIn("不替代 result.json", report)
 
-    def test_novelty_warning_only_appears_when_novelty_fails(self) -> None:
+    def test_local_overlap_is_not_reported_as_academic_failure(self) -> None:
         result = sample_result()
-        failed_report = render_chinese_markdown_report(result)
         result["verification"]["novelty"]["passed"] = True
-        passed_report = render_chinese_markdown_report(result)
+        result["verification"]["novelty"]["literature_novelty"] = {
+            "status": "potentially_distinct",
+            "risk": "medium",
+            "mechanism_difference": "A different routing mechanism.",
+        }
+        report = render_chinese_markdown_report(result)
 
-        warning = "当前研究想法与历史记忆中的已有想法相似度较高"
-        self.assertIn(warning, failed_report)
-        self.assertNotIn(warning, passed_report)
+        self.assertIn("这只是本地去重提醒", report)
+        self.assertIn("仍需人工复核最新文献", report)
+        self.assertNotIn("本地历史重复导致学术新颖性失败", report)
 
     def test_zero_relevance_external_results_are_cautioned(self) -> None:
         result = deepcopy(sample_result())
@@ -159,6 +179,32 @@ class ChineseReportTests(unittest.TestCase):
 
         self.assertTrue(any("相关性分数为 0" in item for item in messages))
         self.assertIn("由于相关性不足，未用于文献分析", report)
+
+    def test_rejected_external_evidence_is_listed(self) -> None:
+        result = deepcopy(sample_result())
+        result["external_evidence_rejected_for_literature"] = [{
+            "title": "X-to-4D Generation",
+            "relevance_score": 0.167,
+            "reason": "Excluded domain without topic-core concepts.",
+        }]
+
+        report = render_chinese_markdown_report(result)
+
+        self.assertIn("被拒绝的外部证据", report)
+        self.assertIn("X-to-4D Generation", report)
+        self.assertIn("Excluded domain", report)
+
+    def test_weak_evidence_and_gap_status_are_explained(self) -> None:
+        result = deepcopy(sample_result())
+        result["evidence_context"][0]["support_level"] = "weak"
+        result["literature_analysis"] = {
+            "research_gap_status": "insufficient_topic_relevant_evidence"
+        }
+
+        report = render_chinese_markdown_report(result)
+
+        self.assertIn("可支持问题背景，但不足以支撑完整研究方案", report)
+        self.assertIn("无法从主题相关证据中建立可靠研究空白", report)
 
 
 if __name__ == "__main__":

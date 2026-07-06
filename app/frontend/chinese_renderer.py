@@ -91,15 +91,25 @@ def verification_failure_summary(result: dict[str, Any]) -> str:
         return "未记录失败的验证项目。"
     summary = f"主要失败项：{'、'.join(failed_names)}。"
     novelty = (result.get("verification") or {}).get("novelty") or {}
-    if not novelty.get("passed", True):
+    literature_status = (
+        novelty.get("literature_novelty", {}).get("status")
+    )
+    if literature_status == "insufficient_literature_evidence":
         summary += (
-            "新颖性验证未通过，当前想法可能与历史记忆中的已有想法"
-            "过于相似。"
+            "当前缺少足够的主题相关论文、benchmark、method 或 survey，"
+            "无法可靠判断学术新颖性。"
         )
+    elif literature_status == "overlapping":
+        summary += "当前方向与已有论文或方法存在较高重叠风险。"
     return summary
 
 
 def render_chinese_summary(result: dict[str, Any]) -> str:
+    novelty = (result.get("verification") or {}).get("novelty") or {}
+    literature_status = (
+        novelty.get("literature_novelty", {}).get("status", "未记录")
+    )
+    local_overlap = novelty.get("local_memory_overlap") or {}
     lines = [
         "### 运行结果总览",
         "",
@@ -108,6 +118,11 @@ def render_chinese_summary(result: dict[str, Any]) -> str:
         f"- **任务类型：** {zh_task_type(str(result.get('task_type', 'unknown')))}",
         f"- **证据状态：** {zh_status(str(result.get('evidence_status', 'unknown')))}",
         f"- **是否通过验证：** {zh_bool(bool(result.get('verification_passed')))}",
+        f"- **文献新颖性状态：** {literature_status}",
+        (
+            "- **是否存在本地历史草案重叠：** "
+            + zh_bool(bool(local_overlap.get("has_overlap")))
+        ),
     ]
     if not result.get("verification_passed"):
         lines.extend([
@@ -157,6 +172,16 @@ def evidence_quality_messages(result: dict[str, Any]) -> list[str]:
             "例如 indirect prompt injection、tool-use security、"
             "computer-use agent security、MCP governance 等方向。"
         )
+    if (
+        result.get("evidence_status") == "evidence_insufficient"
+        and any(
+            item.get("support_level") == "weak"
+            for item in local_evidence
+        )
+    ):
+        messages.append(
+            "当前证据可支持问题背景，但不足以支撑完整研究方案。"
+        )
     external_evidence = result.get("external_evidence") or []
     if any(
         float(item.get("relevance_score") or 0.0) == 0.0
@@ -177,6 +202,14 @@ def evidence_quality_messages(result: dict[str, Any]) -> list[str]:
             "外部检索结果已记录，但由于相关性不足，未用于文献分析和"
             "研究空白生成。"
         )
+    gap_status = (result.get("literature_analysis") or {}).get(
+        "research_gap_status"
+    )
+    if gap_status in {
+        "insufficient_topic_relevant_evidence",
+        "evidence_insufficient",
+    }:
+        messages.append("当前无法从主题相关证据中建立可靠研究空白。")
     return messages
 
 
@@ -273,6 +306,24 @@ def render_chinese_markdown_report(result: dict[str, Any]) -> str:
         else:
             lines.append("- 已启用外部检索，但未获得结果。")
 
+    rejected_external = (
+        result.get("external_evidence_rejected_for_literature") or []
+    )
+    if rejected_external:
+        lines.extend([
+            "",
+            "### 被拒绝的外部证据",
+            "",
+            "以下外部检索结果因主题相关性不足，未用于文献分析。",
+            "",
+        ])
+        for item in rejected_external:
+            lines.extend([
+                f"- **标题：** {item.get('title') or '未命名条目'}",
+                f"  - 相关性分数：{item.get('relevance_score', 0.0)}",
+                f"  - 拒绝原因：{item.get('reason') or '未记录'}",
+            ])
+
     lines.extend(["", "## 四、候选研究想法", ""])
     ideas = result.get("candidate_ideas") or []
     if not ideas:
@@ -347,11 +398,62 @@ def render_chinese_markdown_report(result: dict[str, Any]) -> str:
             "",
         ])
         if name == "novelty" and not detail.get("passed", False):
+            literature_novelty = detail.get("literature_novelty") or {}
+            status = literature_novelty.get("status")
+            if status == "insufficient_literature_evidence":
+                lines.extend([
+                    "> 当前缺少足够的最新论文、benchmark、method 或 survey "
+                    "对比，因此无法可靠判断学术新颖性。",
+                    "",
+                ])
+            elif status == "overlapping":
+                lines.extend([
+                    "> 当前方向与已有论文或已有方法高度重叠，"
+                    "学术新颖性风险较高。",
+                    "",
+                ])
+        if name == "novelty":
+            local_overlap = detail.get("local_memory_overlap") or {}
+            literature_novelty = detail.get("literature_novelty") or {}
             lines.extend([
-                "> 当前研究想法与历史记忆中的已有想法相似度较高，"
-                "因此不应直接作为高新颖性方向使用。",
+                "#### 本地历史草案去重诊断",
+                "",
+                (
+                    "- **是否相似：** "
+                    + zh_bool(bool(local_overlap.get("has_overlap")))
+                ),
+                (
+                    "- **最高相似度：** "
+                    + str(local_overlap.get("max_similarity", 0.0))
+                ),
+                (
+                    "- **匹配历史标题：** "
+                    + str(local_overlap.get("matched_title") or "无")
+                ),
+                (
+                    "- 这只是本地去重提醒，不等同于已有研究重复，"
+                    "也不会单独导致学术新颖性失败。"
+                ),
+                "",
+                "#### 文献新颖性筛查",
+                "",
+                f"- **状态：** {literature_novelty.get('status', '未记录')}",
+                f"- **风险：** {literature_novelty.get('risk', 'unknown')}",
+                (
+                    "- **机制差异说明：** "
+                    + str(
+                        literature_novelty.get("mechanism_difference")
+                        or "未记录"
+                    )
+                ),
                 "",
             ])
+            if literature_novelty.get("status") == "potentially_distinct":
+                lines.extend([
+                    "> 当前方向相对已有方法具有一定机制差异，"
+                    "但仍需人工复核最新文献。",
+                    "",
+                ])
 
     lines.extend(["## 八、Agent 执行轨迹", ""])
     trace = result.get("agent_trace") or []
@@ -374,7 +476,10 @@ def render_chinese_markdown_report(result: dict[str, Any]) -> str:
         "",
         "- 当前检索主要依赖本地论文和轻量关键词匹配。",
         "- 证据充分不代表研究空白一定成立。",
-        "- 新颖性验证依赖历史记忆和启发式相似度。",
+        (
+            "- 本地历史记忆仅用于草案去重提醒；学术新颖性状态来自"
+            "主题相关文献的保守启发式比较。"
+        ),
         "- 实验方案只是规划，不代表真实实验结果。",
         "- 执行实验前仍需人工复核最新文献、数据集、基线和评价指标。",
         "",

@@ -407,7 +407,7 @@ class EvidenceVerifierTests(unittest.TestCase):
 
 
 class VerifierCoverageTests(unittest.TestCase):
-    def test_novelty_verifier_rejects_similar_and_accepts_new_idea(self) -> None:
+    def test_local_memory_overlap_is_warning_not_academic_decision(self) -> None:
         existing = ResearchIdea(
             title="Adaptive LVLM verification",
             hypothesis="Use uncertainty for routing.",
@@ -426,7 +426,89 @@ class VerifierCoverageTests(unittest.TestCase):
         novel = NoveltyVerifier().verify(new_idea, history)
 
         self.assertFalse(duplicate.passed)
-        self.assertTrue(novel.passed)
+        self.assertFalse(novel.passed)
+        self.assertTrue(duplicate.local_memory_overlap["has_overlap"])
+        self.assertEqual(
+            duplicate.local_memory_overlap["effect"],
+            "warning_only",
+        )
+        self.assertFalse(novel.local_memory_overlap["has_overlap"])
+        self.assertEqual(
+            novel.literature_novelty["status"],
+            "insufficient_literature_evidence",
+        )
+
+    def test_literature_novelty_can_pass_despite_local_overlap(self) -> None:
+        idea = ResearchIdea(
+            title="Adaptive LVLM verification",
+            hypothesis="Use uncertainty for routing.",
+            motivation="Reduce hallucination.",
+            method="Route uncertain answers through visual verification.",
+        )
+        result = NoveltyVerifier().verify(
+            idea,
+            [idea.to_dict()],
+            literature_analysis={
+                "existing_methods": [
+                    "A calibration baseline estimates uncertainty without "
+                    "routing answers through visual evidence."
+                ]
+            },
+            evidence_context=[
+                {
+                    "title": "Calibration Baseline",
+                    "text": "A benchmark evaluates uncertainty calibration.",
+                    "support_level": "moderate",
+                },
+                {
+                    "title": "Grounded Generation",
+                    "text": "A dataset measures visual grounding.",
+                    "support_level": "moderate",
+                },
+            ],
+        )
+
+        self.assertTrue(result.passed)
+        self.assertTrue(result.local_memory_overlap["has_overlap"])
+        self.assertEqual(
+            result.literature_novelty["status"],
+            "potentially_distinct",
+        )
+
+    def test_literature_mechanism_overlap_fails_novelty(self) -> None:
+        idea = ResearchIdea(
+            title="Adaptive LVLM verification",
+            hypothesis="Use uncertainty for routing.",
+            motivation="Reduce hallucination.",
+            method="Route uncertain answers through visual verification.",
+        )
+        result = NoveltyVerifier().verify(
+            idea,
+            [],
+            literature_analysis={
+                "existing_methods": [
+                    "Route uncertain answers through visual verification."
+                ]
+            },
+            evidence_context=[
+                {
+                    "title": "Paper One",
+                    "text": "A benchmark evaluates the method.",
+                    "support_level": "moderate",
+                },
+                {
+                    "title": "Paper Two",
+                    "text": "A dataset supports evaluation.",
+                    "support_level": "moderate",
+                },
+            ],
+        )
+
+        self.assertFalse(result.passed)
+        self.assertEqual(
+            result.literature_novelty["status"],
+            "overlapping",
+        )
 
     def test_experiment_verifier_checks_all_required_fields(self) -> None:
         verifier = ExperimentVerifier()
@@ -489,7 +571,13 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertEqual(result["task_type"], "research_proposal")
             self.assertEqual(len(result["candidate_ideas"]), 3)
             self.assertTrue(result["experiment_plan"]["datasets"])
-            self.assertTrue(result["verification_passed"])
+            self.assertFalse(result["verification_passed"])
+            self.assertEqual(
+                result["verification"]["novelty"]["literature_novelty"][
+                    "status"
+                ],
+                "insufficient_literature_evidence",
+            )
             self.assertEqual(result["evidence_status"], "sufficient")
             self.assertIn("evidence_used", result)
             self.assertIn("evidence_gaps", result)
@@ -539,6 +627,7 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertTrue(
                 "skip_revision" in decisions
                 or "trigger_bounded_revision" in decisions
+                or "preserve_novelty_uncertainty" in decisions
             )
             for field in ("observation", "decision", "reason", "action"):
                 self.assertIn(field, result["agent_trace"][0])
@@ -591,7 +680,7 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertTrue(agent.paper_corpus.warnings)
             self.assertTrue(all("broken.pdf" not in item["source"] for item in evidence))
 
-    def test_revision_trigger_reason_survives_when_reverification_passes(self) -> None:
+    def test_novelty_only_failure_does_not_trigger_automatic_revision(self) -> None:
         verification_template = {
             "score": 1.0,
             "issues": [],
@@ -627,17 +716,16 @@ class AIScientificAgentTests(unittest.TestCase):
 
             result = agent.run("LVLM hallucination mitigation")
 
-        self.assertTrue(result["revision_performed"])
-        self.assertTrue(result["verification_passed"])
+        self.assertFalse(result["revision_performed"])
+        self.assertFalse(result["verification_passed"])
         self.assertEqual(
             result["agent_trace"][1]["decision"],
-            "trigger_bounded_revision",
+            "preserve_novelty_uncertainty",
         )
-        self.assertIn("novelty verifier failed", result["agent_trace"][1]["reason"])
-        self.assertIn("novelty", result["agent_trace"][1]["observation"])
+        self.assertIn("cannot establish", result["agent_trace"][1]["reason"])
         self.assertEqual(
             result["agent_trace"][2]["decision"],
-            "accept_current_plan",
+            "preserve_verifier_failure",
         )
 
 
@@ -749,7 +837,7 @@ class AgentDecisionPolicyTests(unittest.TestCase):
         self.assertIn("baseline, metric", entry.reason)
         self.assertIn("experiment-plan completeness", entry.result)
 
-    def test_before_revision_targets_novelty_failure(self) -> None:
+    def test_before_revision_preserves_novelty_uncertainty(self) -> None:
         verification = {
             "evidence": {"passed": True, "issues": []},
             "experiment": {"passed": True, "issues": []},
@@ -765,9 +853,8 @@ class AgentDecisionPolicyTests(unittest.TestCase):
             verification=verification,
         )
 
-        self.assertEqual(entry.decision, "trigger_bounded_revision")
-        self.assertIn("novelty verifier failed", entry.reason)
-        self.assertIn("idea differentiation", entry.result)
+        self.assertEqual(entry.decision, "preserve_novelty_uncertainty")
+        self.assertIn("cannot establish academic novelty", entry.reason)
 
     def test_evidence_failure_is_explained_and_preserved(self) -> None:
         verification = {
@@ -1419,6 +1506,30 @@ class ExperimentBlueprintServiceTests(unittest.TestCase):
 
 
 class AgentServiceTests(unittest.TestCase):
+    def test_evidence_deduplication_keeps_higher_score(self) -> None:
+        duplicate_low = {
+            "title": "The Evolution of Tool Use in LLM Agents",
+            "page": 3,
+            "section": "Method",
+            "supporting_claim": "Tool use requires permission checks.",
+            "score": 0.3,
+            "source": "first.pdf",
+        }
+        duplicate_high = {
+            **duplicate_low,
+            "score": 0.8,
+            "source": "duplicate-name.pdf",
+        }
+
+        deduplicated, count = EvidenceService._deduplicate(
+            [duplicate_low, duplicate_high]
+        )
+
+        self.assertEqual(count, 1)
+        self.assertEqual(len(deduplicated), 1)
+        self.assertEqual(deduplicated[0]["score"], 0.8)
+        self.assertEqual(deduplicated[0]["source"], "duplicate-name.pdf")
+
     def test_evidence_service_assigns_evidence_ids(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             memory = ScientificMemory(Path(directory) / "memory")

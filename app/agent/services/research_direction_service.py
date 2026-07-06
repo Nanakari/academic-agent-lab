@@ -317,7 +317,13 @@ class ResearchDirectionService:
     def _novelty_risk(verification: dict | None) -> str:
         if verification is None or "novelty" not in verification:
             return "unknown"
-        return "low" if verification["novelty"].get("passed", False) else "high"
+        novelty = verification["novelty"]
+        literature_risk = (
+            novelty.get("literature_novelty", {}).get("risk")
+        )
+        if literature_risk in {"low", "medium", "high", "unknown"}:
+            return literature_risk
+        return "low" if novelty.get("passed", False) else "high"
 
     @staticmethod
     def _feasibility_risk(verification: dict | None) -> str:
