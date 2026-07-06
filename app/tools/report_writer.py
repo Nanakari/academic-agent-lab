@@ -124,6 +124,19 @@ class ReportWriter:
                         f"(implementation evidence; retrieved "
                         f"{item.get('retrieved_at') or 'unknown'})"
                     )
+        if external_status.get("enabled"):
+            lines.extend([
+                "",
+                f"- Run at: {external_status.get('run_at') or 'unknown'}",
+                (
+                    "- Original retrieval times by source: "
+                    f"{external_status.get('retrieved_at_by_source') or {}}"
+                ),
+                (
+                    "- Cache loaded at: "
+                    f"{external_status.get('cache_loaded_at') or 'not used'}"
+                ),
+            ])
         lines.extend([
             "",
             "- arXiv evidence is based on metadata / abstract-level retrieval only.",

@@ -27,9 +27,11 @@ class ArxivSearchService:
         self.delay_seconds = max(0.0, delay_seconds)
         self.opener = opener
         self.last_warnings: list[str] = []
+        self.last_attempt_succeeded = True
 
     def search(self, query: str, max_results: int = 5) -> list[EvidenceItem]:
         self.last_warnings = []
+        self.last_attempt_succeeded = True
         params = urllib.parse.urlencode({
             "search_query": f"all:{query}",
             "start": 0,
@@ -48,6 +50,7 @@ class ArxivSearchService:
                 payload = response.read()
             return self._parse_feed(payload, query)
         except Exception as exc:
+            self.last_attempt_succeeded = False
             self.last_warnings.append(f"arXiv retrieval failed: {exc}")
             return []
 

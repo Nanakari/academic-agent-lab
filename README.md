@@ -252,8 +252,16 @@ $env:GITHUB_TOKEN="..."
 
 External results are cached as JSON below `data/external_cache/`. Cached
 records include the query, source, retrieval time, normalized items, and
-warnings so a run can be audited and repeated. Network or cache failures are
-reported in `result.json` and `report.md` and do not stop the local pipeline.
+warnings so a run can be audited and repeated. Cache keys include the source,
+actual source-specific query, result limit, and cache schema version. Successful
+zero-result searches may be cached, but failed network/API retrievals are not.
+Network or cache failures are reported in `result.json` and `report.md` and do
+not stop the local pipeline.
+
+The result distinguishes the current `run_at` time, the original
+`retrieved_at_by_source` times, and `cache_loaded_at`. It also records the
+actual arXiv and GitHub queries separately; GitHub queries receive an
+implementation-oriented suffix.
 
 Limitations:
 

@@ -43,9 +43,13 @@ class ExternalEvidenceResult:
     enabled: bool
     query: str
     retrieved_at: str
+    run_at: str | None = None
+    cache_loaded_at: str | None = None
     evidence_items: list[EvidenceItem] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     sources_used: list[str] = field(default_factory=list)
+    queries_used: dict[str, str] = field(default_factory=dict)
+    retrieved_at_by_source: dict[str, str] = field(default_factory=dict)
     cache_used: bool = False
 
     def to_dict(self) -> dict[str, Any]:

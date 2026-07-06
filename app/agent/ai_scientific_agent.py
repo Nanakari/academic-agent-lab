@@ -143,20 +143,30 @@ class AIScientificAgent(BaseAgent):
 
             evidence_context = self._retrieve_evidence(user_query, self.top_k)
             self.current_step = 2
-            external_queries = (
-                self.external_query_builder.build_queries(user_query)
+            planned_external_queries = (
+                self.external_query_builder.build_queries(user_query, max_queries=1)
                 if self.external_search_enabled
                 else []
             )
             external_query = (
-                external_queries[0] if external_queries else user_query.strip()
+                planned_external_queries[0]
+                if planned_external_queries
+                else user_query.strip()
             )
             if self.external_search_enabled:
+                source_queries = {
+                    source: self.external_query_builder.for_source(
+                        external_query,
+                        source,
+                    )
+                    for source in self.external_search_sources
+                }
                 external_result = self.external_evidence_service.retrieve(
                     external_query,
                     use_arxiv="arxiv" in self.external_search_sources,
                     use_github="github" in self.external_search_sources,
                     max_results_per_source=self.external_max_results_per_source,
+                    source_queries=source_queries,
                 )
             else:
                 external_result = ExternalEvidenceResult(
@@ -164,6 +174,22 @@ class AIScientificAgent(BaseAgent):
                     query=external_query,
                     retrieved_at="",
                 )
+            external_queries = list(dict.fromkeys(
+                external_result.queries_used.values()
+            ))
+            trace_step_offset = 0
+            if self.external_search_enabled:
+                agent_trace.append(
+                    self.decision_policy.decide_after_external_retrieval(
+                        step=1,
+                        sources_requested=list(self.external_search_sources),
+                        queries_used=dict(external_result.queries_used),
+                        evidence_items=external_result.evidence_items,
+                        warnings=external_result.warnings,
+                        cache_used=external_result.cache_used,
+                    )
+                )
+                trace_step_offset = 1
             # arXiv abstracts may inform literature discovery. GitHub repositories
             # remain engineering evidence and never enter scientific verification.
             literature_context = [
@@ -182,7 +208,7 @@ class AIScientificAgent(BaseAgent):
             self.current_step = 3
             agent_trace.append(
                 self.decision_policy.decide_after_evidence(
-                    step=1,
+                    step=1 + trace_step_offset,
                     topic=user_query.strip(),
                     evidence_context=evidence_context,
                     literature_analysis=literature_analysis,
@@ -214,7 +240,7 @@ class AIScientificAgent(BaseAgent):
             )
             agent_trace.append(
                 self.decision_policy.decide_before_revision(
-                    step=2,
+                    step=2 + trace_step_offset,
                     verification=initial_verification,
                 )
             )
@@ -240,7 +266,7 @@ class AIScientificAgent(BaseAgent):
             self.current_step = 6
             agent_trace.append(
                 self.decision_policy.decide_after_verification(
-                    step=3,
+                    step=3 + trace_step_offset,
                     verification=verification,
                     revision_performed=revision_performed,
                 )
@@ -282,7 +308,7 @@ class AIScientificAgent(BaseAgent):
             )
             agent_trace.append(
                 self.decision_policy.decide_before_report(
-                    step=4,
+                    step=4 + trace_step_offset,
                     evidence_status=evidence_assessment["status"],
                     verification_passed=verification_passed,
                     selected_idea=selected_idea.to_dict(),
@@ -313,7 +339,12 @@ class AIScientificAgent(BaseAgent):
                 "corpus_warnings": list(self.paper_corpus.warnings),
                 "external_search_status": {
                     "enabled": external_result.enabled,
+                    "run_at": external_result.run_at,
                     "retrieved_at": external_result.retrieved_at,
+                    "retrieved_at_by_source": dict(
+                        external_result.retrieved_at_by_source
+                    ),
+                    "cache_loaded_at": external_result.cache_loaded_at,
                     "cache_used": external_result.cache_used,
                     "sources_requested": (
                         list(self.external_search_sources)
@@ -323,6 +354,9 @@ class AIScientificAgent(BaseAgent):
                     "sources_used": list(external_result.sources_used),
                 },
                 "external_search_queries": external_queries,
+                "external_search_query_by_source": dict(
+                    external_result.queries_used
+                ),
                 "external_evidence": [
                     item.to_dict() for item in external_result.evidence_items
                 ],

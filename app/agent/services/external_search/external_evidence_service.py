@@ -33,12 +33,14 @@ class ExternalEvidenceService:
         use_arxiv: bool = True,
         use_github: bool = True,
         max_results_per_source: int = 5,
+        source_queries: dict[str, str] | None = None,
     ) -> ExternalEvidenceResult:
-        retrieved_at = datetime.now(timezone.utc).isoformat()
+        run_at = datetime.now(timezone.utc).isoformat()
         result = ExternalEvidenceResult(
             enabled=use_arxiv or use_github,
             query=query,
-            retrieved_at=retrieved_at,
+            retrieved_at="",
+            run_at=run_at,
         )
         for source, enabled, service, method_name in (
             ("arxiv", use_arxiv, self.arxiv, "search"),
@@ -46,9 +48,15 @@ class ExternalEvidenceService:
         ):
             if not enabled:
                 continue
+            source_query = (source_queries or {}).get(source, query)
+            result.queries_used[source] = source_query
             cached = None
             if self.cache_enabled and not self.force_refresh:
-                cached, warning = self.cache.load(source, query)
+                cached, warning = self.cache.load(
+                    source,
+                    source_query,
+                    max_results_per_source,
+                )
                 if warning:
                     result.warnings.append(warning)
             if cached is not None:
@@ -60,26 +68,46 @@ class ExternalEvidenceService:
                 result.warnings.extend(cached.get("warnings", []))
                 if cached_items:
                     result.sources_used.append(source)
+                cached_retrieved_at = str(cached.get("retrieved_at") or "")
+                result.retrieved_at_by_source[source] = cached_retrieved_at
                 result.cache_used = True
+                result.cache_loaded_at = run_at
                 continue
             try:
-                items = getattr(service, method_name)(query, max_results_per_source)
+                items = getattr(service, method_name)(
+                    source_query,
+                    max_results_per_source,
+                )
                 warnings = list(getattr(service, "last_warnings", []))
+                succeeded = bool(
+                    getattr(service, "last_attempt_succeeded", True)
+                )
             except Exception as exc:
                 items = []
                 warnings = [f"{source} retrieval failed: {exc}"]
+                succeeded = False
             result.evidence_items.extend(items)
             result.warnings.extend(warnings)
             if items:
                 result.sources_used.append(source)
-            if self.cache_enabled:
+            if succeeded:
+                result.retrieved_at_by_source[source] = run_at
+            if self.cache_enabled and succeeded:
                 warning = self.cache.save(
                     source,
-                    query,
-                    retrieved_at,
+                    source_query,
+                    max_results_per_source,
+                    run_at,
                     [item.to_dict() for item in items],
                     warnings,
                 )
                 if warning:
                     result.warnings.append(warning)
+        source_times = [
+            value
+            for value in result.retrieved_at_by_source.values()
+            if value
+        ]
+        if source_times:
+            result.retrieved_at = max(source_times)
         return result

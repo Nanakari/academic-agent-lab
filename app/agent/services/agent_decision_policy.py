@@ -15,6 +15,53 @@ class AgentDecisionPolicy:
         "novelty",
     )
 
+    def decide_after_external_retrieval(
+        self,
+        *,
+        step: int,
+        sources_requested: list[str],
+        queries_used: dict[str, str],
+        evidence_items: list,
+        warnings: list[str],
+        cache_used: bool,
+    ) -> AgentTraceEntry:
+        counts = {
+            source: sum(
+                1
+                for item in evidence_items
+                if (
+                    getattr(item, "source_type", "") == source
+                    or (
+                        source == "github"
+                        and getattr(item, "source_type", "") == "github_repo"
+                    )
+                )
+            )
+            for source in sources_requested
+        }
+        count_text = ", ".join(
+            f"{source}={counts[source]}" for source in sources_requested
+        ) or "no sources requested"
+        return AgentTraceEntry(
+            step=step,
+            observation=(
+                "External search was enabled for "
+                f"{', '.join(sources_requested) or 'no valid sources'}; "
+                f"queries={queries_used}."
+            ),
+            decision="use_external_evidence_as_supplement",
+            reason=(
+                "arXiv metadata may extend literature discovery, while GitHub "
+                "repositories are restricted to implementation evidence."
+            ),
+            action="retrieve_external_metadata",
+            result=(
+                f"Retrieved {count_text}; cache_used={cache_used}; "
+                f"warnings={len(warnings)}. External evidence does not replace "
+                "local scientific verification."
+            ),
+        )
+
     def decide_after_evidence(
         self,
         *,

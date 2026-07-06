@@ -20,6 +20,7 @@ class GitHubSearchService:
         self.timeout = timeout
         self.opener = opener
         self.last_warnings: list[str] = []
+        self.last_attempt_succeeded = True
 
     def search_repositories(
         self,
@@ -27,6 +28,7 @@ class GitHubSearchService:
         max_results: int = 5,
     ) -> list[EvidenceItem]:
         self.last_warnings = []
+        self.last_attempt_succeeded = True
         token = os.getenv("GITHUB_TOKEN")
         headers = {
             "Accept": "application/vnd.github+json",
@@ -51,6 +53,7 @@ class GitHubSearchService:
                 payload = json.loads(response.read().decode("utf-8"))
             return self._normalize(payload.get("items", []), query)
         except Exception as exc:
+            self.last_attempt_succeeded = False
             self.last_warnings.append(f"GitHub retrieval failed: {exc}")
             return []
 
