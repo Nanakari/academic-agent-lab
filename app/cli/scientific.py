@@ -208,6 +208,8 @@ def summarize_result(result: dict, *, include_mode: bool = False) -> dict:
         "external_search_status": result["external_search_status"],
         "external_evidence_count": len(result["external_evidence"]),
         "verification_passed": result["verification_passed"],
+        "scientific_readiness": result.get("scientific_readiness"),
+        "final_recommendation": result.get("final_recommendation"),
         "llm_call_count": result.get("llm_call_count", 0),
         "llm_call_stages": result.get("llm_call_stages", []),
         "llm_fallback_stages": result.get("llm_fallback_stages", []),

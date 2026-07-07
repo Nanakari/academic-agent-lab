@@ -31,6 +31,7 @@ from app.tools.paper_corpus import PaperCorpusIndexer
 from app.tools.paper_analyzer import PaperAnalyzer
 from app.tools.experiment_designer import ExperimentDesigner
 from app.tools.report_writer import ReportWriter
+from app.tools.research_idea_generator import ResearchIdeaGenerator
 from app.verifier.evidence_verifier import EvidenceVerifier
 from app.verifier.experiment_verifier import ExperimentVerifier
 from app.verifier.novelty_verifier import NoveltyVerifier
@@ -64,7 +65,7 @@ class FakeScientificLLM:
                 "evidence_confidence": "moderate",
                 "missing_evidence": [],
             })
-        if "ideas containing 3 to 5 items" in prompt:
+        if "ideas array must contain 3 to 5 complete items" in prompt:
             return json.dumps({
                 "ideas": [
                     {
@@ -98,12 +99,27 @@ class FakeScientificLLM:
             })
         if "attack_scenarios" in prompt and "failure_taxonomy" in prompt:
             return json.dumps({
-                "attack_scenarios": ["Indirect prompt injection in retrieved pages"],
-                "tool_schemas": ["search_web(query: string)"],
-                "datasets": ["Mixed tool-call safety benchmark"],
-                "baselines": ["Unprotected tool-calling agent"],
+                "attack_scenarios": [{
+                    "scenario_id": "indirect_prompt_injection",
+                    "description": "Indirect prompt injection in retrieved pages",
+                }],
+                "tool_schemas": [{
+                    "tool_name": "search_web",
+                    "function": "search_web(query: string)",
+                }],
+                "datasets": [{
+                    "name": "Mixed tool-call safety benchmark",
+                    "source": "Synthetic and benign tool-use tasks",
+                }],
+                "baselines": [{
+                    "name": "Unprotected tool-calling agent",
+                    "description": "No verifier gate",
+                }],
                 "metrics": ["attack success rate", "safe tool-call rate"],
-                "ablations": ["Remove verifier gate"],
+                "ablations": [{
+                    "component": "verifier_gate",
+                    "variation": "Remove verifier gate",
+                }],
                 "failure_taxonomy": ["unsafe tool invocation"],
                 "reproducibility_notes": ["Pin model, prompts, and tool schemas."],
                 "risks": ["False refusal may increase."],
@@ -203,6 +219,95 @@ class ExperimentDesignerTests(unittest.TestCase):
 
         self.assertNotIn("One established public benchmark", text)
         self.assertNotIn("Primary task score", text)
+
+    def test_llm_idea_generation_accepts_top_level_array_and_aliases(self) -> None:
+        class ArrayIdeaLLM:
+            def ask(self, messages):
+                return json.dumps([
+                    {
+                        "name": "Gate risky tool calls",
+                        "expected_effect": "Unsafe calls should decrease.",
+                        "why": "Tool calls can be hijacked.",
+                        "approach": "Verify arguments before execution.",
+                        "evidence": ["E1"],
+                        "evaluation": "Run attack and benign tasks.",
+                        "limitations": ["May refuse benign tasks."],
+                    },
+                    {
+                        "name": "Quarantine tool outputs",
+                        "approach": "Separate data from instructions.",
+                    },
+                    {
+                        "name": "Schema-constrained tools",
+                        "approach": "Constrain arguments with typed schemas.",
+                    },
+                ])
+
+        evidence = [{
+            "evidence_id": "E1",
+            "excerpt": "Indirect prompt injection can hijack tool calls.",
+        }]
+        generator = ResearchIdeaGenerator(llm=ArrayIdeaLLM(), enabled=True)
+
+        ideas = generator.generate_ideas("LLM Agent tool safety", evidence)
+
+        self.assertEqual(generator.last_stage_result.llm_used, True)
+        self.assertEqual(len(ideas), 3)
+        self.assertEqual(ideas[0].title, "Gate risky tool calls")
+        self.assertTrue(ideas[1].hypothesis)
+
+    def test_llm_experiment_design_cleans_object_items(self) -> None:
+        class ObjectPlanLLM:
+            def ask(self, messages):
+                return json.dumps({
+                    "attack_scenarios": [{
+                        "scenario_id": "web_injection",
+                        "description": "Hidden prompt injection in a web page.",
+                    }],
+                    "tool_schemas": [{
+                        "tool_name": "browser",
+                        "function": "fetch_url(url: string)",
+                    }],
+                    "datasets": [{
+                        "name": "ToolBench-Safety",
+                        "source": "Mixed attack and benign tasks",
+                    }],
+                    "baselines": [{
+                        "name": "vanilla_agent",
+                        "description": "No safety gate",
+                    }],
+                    "metrics": ["attack success rate"],
+                    "ablations": [{
+                        "component": "verifier",
+                        "variation": "remove verifier",
+                    }],
+                    "failure_taxonomy": ["unsafe tool call"],
+                    "reproducibility_notes": ["Pin prompts."],
+                    "risks": ["False refusals."],
+                    "expected_results": ["Lower attack success."],
+                })
+
+        idea = ResearchIdea(
+            title="Tool safety",
+            hypothesis="Verifier helps.",
+            motivation="Prompt injection risk.",
+            method="Verify tool calls.",
+        )
+        plan = ExperimentDesigner(
+            llm=ObjectPlanLLM(),
+            enabled=True,
+        ).design_experiment(idea, "LLM Agent tool safety")
+        combined = " ".join(
+            plan.datasets
+            + plan.baselines
+            + plan.tool_schemas
+            + plan.attack_scenarios
+            + plan.ablation
+        )
+
+        self.assertIn("ToolBench-Safety: Mixed attack and benign tasks", combined)
+        self.assertIn("browser: fetch_url(url: string)", combined)
+        self.assertNotIn("{'", combined)
 
 
 class ScientificMemoryTests(unittest.TestCase):
@@ -838,8 +943,17 @@ class AIScientificAgentTests(unittest.TestCase):
         )
         self.assertEqual(
             result["experiment_plan"]["attack_scenarios"],
-            ["Indirect prompt injection in retrieved pages"],
+            ["indirect_prompt_injection: Indirect prompt injection in retrieved pages"],
         )
+        for field in ("datasets", "baselines", "tool_schemas", "attack_scenarios", "ablation"):
+            self.assertFalse(
+                any("{'" in item for item in result["experiment_plan"][field])
+            )
+        self.assertIn(
+            result["scientific_readiness"],
+            {"strong", "weak", "memory_only", "insufficient_evidence", "exploratory"},
+        )
+        self.assertTrue(result["final_recommendation"])
         self.assertEqual(result["llm_reflection"]["mode"], "llm_assisted")
         self.assertEqual(len(llm.calls), 4)
 
@@ -868,6 +982,21 @@ class AIScientificAgentTests(unittest.TestCase):
         self.assertEqual(result["llm_call_stages"], [])
         self.assertIn("candidate_ideas", result["deterministic_sections"])
         self.assertIn("experiment_plan", result["deterministic_sections"])
+
+    def test_memory_only_insufficient_gap_is_exploratory(self) -> None:
+        readiness = AIScientificAgent._scientific_readiness(
+            evidence_status="memory_only",
+            local_paper_evidence_count=0,
+            literature_analysis={"research_gap_status": "insufficient_evidence"},
+            verification_passed=True,
+        )
+        recommendation = AIScientificAgent._final_recommendation(
+            scientific_readiness=readiness,
+            local_paper_evidence_count=0,
+        )
+
+        self.assertEqual(readiness, "exploratory")
+        self.assertEqual(recommendation, "needs_more_local_paper_evidence")
 
     def test_unreadable_pdf_does_not_abort_local_evidence_scan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1545,7 +1674,21 @@ class ReportWriterTests(unittest.TestCase):
                 "topic": "LLM Agent tool-call safety",
                 "task_type": "research_proposal",
                 "plan": {"steps": []},
+                "llm_call_stages": [
+                    "tool_decision",
+                    "literature_analysis",
+                    "experiment_design",
+                    "reflection",
+                ],
+                "llm_fallback_stages": ["idea_generation"],
+                "llm_fallback_reasons": [{
+                    "stage": "idea_generation",
+                    "reason": "LLM returned incomplete ideas.",
+                }],
                 "evidence_status": "memory_only",
+                "scientific_readiness": "exploratory",
+                "final_recommendation": "needs_more_local_paper_evidence",
+                "external_cache_used": True,
                 "local_paper_evidence_count": 0,
                 "memory_evidence_count": 1,
                 "evidence_context": [],
@@ -1602,6 +1745,13 @@ class ReportWriterTests(unittest.TestCase):
             report,
         )
         self.assertIn("External evidence was loaded from cache", report)
+        self.assertIn(
+            "LLM stages used: tool_decision, literature_analysis, experiment_design, reflection",
+            report,
+        )
+        self.assertIn("LLM fallback stages: idea_generation", report)
+        self.assertIn("Evidence status is **memory_only**", report)
+        self.assertIn("External evidence came from cache", report)
         self.assertIn("**novelty**: NEEDS HUMAN REVIEW", report)
         self.assertIn("duplicate proposal", report)
 

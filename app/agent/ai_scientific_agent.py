@@ -447,6 +447,16 @@ class AIScientificAgent(BaseAgent):
             verification_passed = all(
                 item["passed"] for item in verification.values()
             )
+            scientific_readiness = self._scientific_readiness(
+                evidence_status=evidence_assessment["status"],
+                local_paper_evidence_count=local_paper_evidence_count,
+                literature_analysis=literature_analysis,
+                verification_passed=verification_passed,
+            )
+            final_recommendation = self._final_recommendation(
+                scientific_readiness=scientific_readiness,
+                local_paper_evidence_count=local_paper_evidence_count,
+            )
             novelty_revision_strategy = self._novelty_revision_strategy(
                 initial_verification.get("novelty", {})
             )
@@ -552,6 +562,8 @@ class AIScientificAgent(BaseAgent):
                 "experiment_plan": experiment_plan.to_dict(),
                 "verification": verification,
                 "verification_passed": verification_passed,
+                "scientific_readiness": scientific_readiness,
+                "final_recommendation": final_recommendation,
                 "llm_reflection": reflection,
                 "revision_performed": revision_performed,
                 "novelty_revision_strategy": novelty_revision_strategy,
@@ -639,6 +651,7 @@ class AIScientificAgent(BaseAgent):
     ) -> dict:
         stages = list(tool_decision.llm_call_stages)
         fallback_stages = []
+        fallback_reasons = []
         generated_sections = []
         deterministic_sections = []
         for item in stage_results:
@@ -646,15 +659,59 @@ class AIScientificAgent(BaseAgent):
                 stages.append(item.stage)
             if item.fallback_used:
                 fallback_stages.append(item.stage)
+                fallback_reasons.append({
+                    "stage": item.stage,
+                    "reason": item.warning or "LLM stage fell back to deterministic logic.",
+                })
             generated_sections.extend(item.generated_sections)
             deterministic_sections.extend(item.deterministic_sections)
         return {
             "llm_call_count": len(stages),
             "llm_call_stages": list(dict.fromkeys(stages)),
             "llm_fallback_stages": list(dict.fromkeys(fallback_stages)),
+            "llm_fallback_reasons": fallback_reasons,
             "llm_generated_sections": list(dict.fromkeys(generated_sections)),
             "deterministic_sections": list(dict.fromkeys(deterministic_sections)),
         }
+
+    @staticmethod
+    def _scientific_readiness(
+        *,
+        evidence_status: str,
+        local_paper_evidence_count: int,
+        literature_analysis: dict,
+        verification_passed: bool,
+    ) -> str:
+        gap_status = str(
+            literature_analysis.get("research_gap_status") or ""
+        )
+        if local_paper_evidence_count == 0 and gap_status in {
+            "insufficient_evidence",
+            "insufficient_topic_relevant_evidence",
+            "evidence_insufficient",
+        }:
+            return "exploratory"
+        if evidence_status == "memory_only":
+            return "memory_only"
+        if evidence_status in {"evidence_insufficient", "insufficient_evidence"}:
+            return "insufficient_evidence"
+        if evidence_status == "sufficient" and verification_passed:
+            return "strong"
+        return "weak"
+
+    @staticmethod
+    def _final_recommendation(
+        *,
+        scientific_readiness: str,
+        local_paper_evidence_count: int,
+    ) -> str:
+        if local_paper_evidence_count == 0:
+            return "needs_more_local_paper_evidence"
+        if scientific_readiness in {"exploratory", "insufficient_evidence"}:
+            return "needs_stronger_topic_evidence"
+        if scientific_readiness in {"memory_only", "weak"}:
+            return "needs_human_review_before_claiming_support"
+        return "ready_for_human_reviewed_pilot"
 
     @staticmethod
     def _novelty_revision_strategy(novelty: dict) -> str:

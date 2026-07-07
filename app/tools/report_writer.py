@@ -33,9 +33,43 @@ class ReportWriter:
             f"**Topic:** {result['topic']}",
             f"**Task type:** {result['task_type']}",
             "",
+            "## Run Transparency",
+            "",
+            (
+                "LLM stages used: "
+                + (", ".join(result.get("llm_call_stages", [])) or "None")
+            ),
+            (
+                "LLM fallback stages: "
+                + (", ".join(result.get("llm_fallback_stages", [])) or "None")
+            ),
+            f"Evidence status is **{result['evidence_status']}**.",
+            (
+                f"Scientific readiness is "
+                f"**{result.get('scientific_readiness', 'unknown')}**."
+            ),
+            (
+                f"Final recommendation: "
+                f"**{result.get('final_recommendation', 'not_recorded')}**."
+            ),
+            (
+                "External evidence came from cache."
+                if result.get("external_cache_used")
+                else "External evidence did not come from cache."
+            ),
+            "",
             "## Research plan",
             "",
         ]
+        fallback_reasons = result.get("llm_fallback_reasons", [])
+        if fallback_reasons:
+            lines.extend(["### LLM Fallback Reasons", ""])
+            for item in fallback_reasons:
+                lines.append(
+                    f"- {item.get('stage', 'unknown')}: "
+                    f"{item.get('reason', 'not recorded')}"
+                )
+            lines.append("")
         lines.extend(
             f"{index}. **{step['name']}** — {step['description']}"
             for index, step in enumerate(result["plan"]["steps"], start=1)

@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 
 from app.agent.services.llm_json import (
+    first_present,
     limited_evidence_payload,
     list_of_strings,
-    parse_json_object,
+    parse_json_value,
 )
 from app.agent.services.llm_scientific_analysis_service import LLMStageResult
 from app.schemas.research_idea import ResearchIdea
@@ -131,21 +132,42 @@ class ResearchIdeaGenerator:
                 "role": "system",
                 "content": (
                     "You generate conservative, testable AI research directions. "
-                    "Return only JSON and use only the provided evidence."
+                    "Return only strict JSON and use only the provided evidence. "
+                    "Do not wrap JSON in Markdown."
                 ),
             },
             {
                 "role": "user",
                 "content": (
-                    "Return a JSON object with key ideas containing 3 to 5 items. "
-                    "Each item must include title, hypothesis, motivation, method, "
-                    "required_evidence, expected_experiment, risks.\n"
+                    "Return exactly this JSON schema and no extra text:\n"
+                    "{\n"
+                    '  "ideas": [\n'
+                    "    {\n"
+                    '      "title": "short research direction title",\n'
+                    '      "hypothesis": "testable hypothesis",\n'
+                    '      "motivation": "why evidence suggests this matters",\n'
+                    '      "method": "concrete proposed method",\n'
+                    '      "required_evidence": ["E1"],\n'
+                    '      "expected_experiment": "minimum experiment to test it",\n'
+                    '      "risks": ["main risk"]\n'
+                    "    }\n"
+                    "  ]\n"
+                    "}\n"
+                    "The ideas array must contain 3 to 5 complete items.\n"
                     + json.dumps(payload, ensure_ascii=False)
                 ),
             },
         ])
-        parsed = parse_json_object(raw)
-        records = parsed.get("ideas")
+        parsed = parse_json_value(raw)
+        if isinstance(parsed, list):
+            records = parsed
+        elif isinstance(parsed, dict):
+            records = first_present(
+                parsed,
+                ("ideas", "candidate_ideas", "research_ideas", "research_directions", "directions"),
+            )
+        else:
+            records = None
         if not isinstance(records, list) or not 3 <= len(records) <= 5:
             raise ValueError("LLM idea generation must return 3 to 5 ideas.")
         refs = [
@@ -153,18 +175,30 @@ class ResearchIdeaGenerator:
             for item in evidence_context[:3]
             if item.get("evidence_id")
         ]
+        evidence_summary = (
+            evidence_context[0].get("excerpt")
+            or evidence_context[0].get("text")
+            if evidence_context
+            else "No strong local evidence was retrieved."
+        )
         ideas = []
         for record in records[:5]:
             if not isinstance(record, dict):
                 continue
-            title = str(record.get("title") or "").strip()
-            hypothesis = str(record.get("hypothesis") or "").strip()
-            motivation = str(record.get("motivation") or "").strip()
-            method = str(record.get("method") or "").strip()
-            if not all((title, hypothesis, motivation, method)):
+            title = str(first_present(record, ("title", "name", "direction")) or "").strip()
+            method = str(first_present(record, ("method", "approach", "method_sketch")) or "").strip()
+            if not all((title, method)):
                 continue
+            hypothesis = str(
+                first_present(record, ("hypothesis", "claim", "expected_effect"))
+                or f"{title} should improve the target reliability or safety outcome."
+            ).strip()
+            motivation = str(
+                first_present(record, ("motivation", "rationale", "why"))
+                or f"Evidence suggests a scoped gap: {str(evidence_summary)[:220]}"
+            ).strip()
             required_evidence = list_of_strings(
-                record.get("required_evidence"),
+                first_present(record, ("required_evidence", "evidence", "evidence_refs")),
                 default=refs,
             )
             ideas.append(
@@ -179,9 +213,13 @@ class ResearchIdeaGenerator:
                     or refs,
                     required_evidence=required_evidence,
                     expected_experiment=str(
-                        record.get("expected_experiment") or ""
+                        first_present(record, ("expected_experiment", "experiment", "evaluation"))
+                        or "Run a controlled comparison against matched baselines."
                     ).strip(),
-                    risks=list_of_strings(record.get("risks")),
+                    risks=list_of_strings(
+                        first_present(record, ("risks", "limitations", "failure_modes")),
+                        default=["Requires stronger evidence before strong claims."],
+                    ),
                     novelty_score=0.76,
                     feasibility_score=0.74,
                 )

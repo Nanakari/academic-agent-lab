@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from app.agent.services.llm_json import (
+    first_present,
     limited_evidence_payload,
     list_of_strings,
     parse_json_object,
@@ -142,17 +143,18 @@ class ExperimentDesigner:
                 "role": "system",
                 "content": (
                     "You design bounded, reproducible AI safety experiments. "
-                    "Return only JSON. Do not claim results; propose an "
-                    "experiment plan for human review."
+                    "Return only strict JSON. Do not wrap JSON in Markdown. "
+                    "Do not claim results; propose an experiment plan for human review."
                 ),
             },
             {
                 "role": "user",
                 "content": (
-                    "Return a JSON object with required keys: attack_scenarios, "
-                    "tool_schemas, datasets, baselines, metrics, ablations, "
-                    "failure_taxonomy, reproducibility_notes, risks, "
-                    "expected_results.\n"
+                    "Return exactly one JSON object with these required keys: "
+                    "attack_scenarios, tool_schemas, datasets, baselines, metrics, "
+                    "ablations, failure_taxonomy, reproducibility_notes, risks, "
+                    "expected_results. Each value must be a JSON array. Array "
+                    "items may be strings or objects with name/description fields.\n"
                     + json.dumps(payload, ensure_ascii=False)
                 ),
             },
@@ -161,7 +163,9 @@ class ExperimentDesigner:
         datasets = list_of_strings(parsed.get("datasets"))
         baselines = list_of_strings(parsed.get("baselines"))
         metrics = list_of_strings(parsed.get("metrics"))
-        ablations = list_of_strings(parsed.get("ablations"))
+        ablations = list_of_strings(
+            first_present(parsed, ("ablations", "ablation"))
+        )
         risks = list_of_strings(parsed.get("risks"))
         if not all((datasets, baselines, metrics, ablations, risks)):
             raise ValueError("LLM experiment plan missed required verifier fields.")
