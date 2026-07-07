@@ -42,6 +42,12 @@ class AgentDecisionPolicy:
         count_text = ", ".join(
             f"{source}={counts[source]}" for source in sources_requested
         ) or "no sources requested"
+        cache_note = (
+            "External retrieval was loaded from cache, not from a live network "
+            "request in this run."
+            if cache_used
+            else "External retrieval used live provider calls in this run."
+        )
         return AgentTraceEntry(
             step=step,
             observation=(
@@ -56,7 +62,8 @@ class AgentDecisionPolicy:
             ),
             action="retrieve_external_metadata",
             result=(
-                f"Retrieved {count_text}; cache_used={cache_used}; "
+                f"Retrieved {count_text}; cache_used={cache_used}. "
+                f"{cache_note} "
                 f"warnings={len(warnings)}. External evidence does not replace "
                 "local scientific verification."
             ),
@@ -83,6 +90,25 @@ class AgentDecisionPolicy:
                 result=(
                     "The following idea and experiment plan must be treated as "
                     "exploratory."
+                ),
+            )
+
+        if not any(item.get("kind") == "local_paper" for item in evidence_context):
+            return AgentTraceEntry(
+                step=step,
+                observation=(
+                    "Evidence was retrieved only from scientific memory; no "
+                    "matching local-paper evidence was found."
+                ),
+                decision="downgrade_gap_confidence",
+                reason=(
+                    "Scientific memory is useful for draft continuity, but it "
+                    "is weaker support than matching local paper evidence."
+                ),
+                action="continue_with_exploratory_planning",
+                result=(
+                    "Generated ideas should be treated as memory-supported and "
+                    "not described as strongly grounded in the local paper corpus."
                 ),
             )
 

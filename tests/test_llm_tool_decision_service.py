@@ -51,6 +51,8 @@ class LLMToolDecisionServiceTests(unittest.TestCase):
         self.assertFalse(decision.use_scientific_memory)
         self.assertTrue(decision.use_external_search)
         self.assertEqual(decision.external_sources, ["arxiv"])
+        self.assertEqual(decision.llm_call_count, 1)
+        self.assertEqual(decision.llm_call_stages, ["tool_decision"])
 
     def test_external_search_request_is_blocked_when_no_sources_allowed(self) -> None:
         service = LLMToolDecisionService(
@@ -91,6 +93,8 @@ class LLMToolDecisionServiceTests(unittest.TestCase):
         self.assertFalse(decision.llm_used)
         self.assertEqual(decision.mode, "deterministic_fallback")
         self.assertFalse(decision.use_external_search)
+        self.assertEqual(decision.llm_call_count, 0)
+        self.assertEqual(decision.llm_call_stages, [])
 
 
 if __name__ == "__main__":

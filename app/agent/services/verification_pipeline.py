@@ -89,7 +89,13 @@ class VerificationPipeline:
             for item in evidence_context
         ]
         gaps = []
-        if not any(item["kind"] == "local_paper" for item in evidence_context):
+        has_local_paper = any(
+            item["kind"] == "local_paper" for item in evidence_context
+        )
+        has_scientific_memory = any(
+            item["kind"] == "scientific_memory" for item in evidence_context
+        )
+        if not has_local_paper:
             gaps.append("No matching evidence was retrieved from the local paper corpus.")
         if (
             literature_analysis
@@ -101,14 +107,18 @@ class VerificationPipeline:
         ):
             gaps.append(
                 "Research gap could not be established from retrieved evidence."
-            )
+        )
         gaps.extend(evidence_verification["issues"])
+        if not evidence_verification["passed"]:
+            status = "evidence_insufficient"
+        elif not has_local_paper and has_scientific_memory:
+            status = "memory_only"
+        elif not has_local_paper:
+            status = "weakly_supported"
+        else:
+            status = "sufficient"
         return {
-            "status": (
-                "sufficient"
-                if evidence_verification["passed"]
-                else "evidence_insufficient"
-            ),
+            "status": status,
             "used": used,
             "gaps": list(dict.fromkeys(gaps)),
             "unsupported_claims": evidence_verification["unsupported_claims"],

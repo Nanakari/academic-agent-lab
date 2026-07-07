@@ -22,6 +22,8 @@ class ScientificToolDecision:
     reason: str = ""
     warnings: list[str] = field(default_factory=list)
     raw_tool_call: dict | None = None
+    llm_call_count: int = 0
+    llm_call_stages: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -64,8 +66,12 @@ class LLMToolDecisionService:
             )
         except Exception as exc:
             fallback.warnings.append(f"LLM tool decision failed: {exc}")
+            fallback.llm_call_count = 1
+            fallback.llm_call_stages = ["tool_decision_failed"]
             return fallback
 
+        fallback.llm_call_count = 1
+        fallback.llm_call_stages = ["tool_decision"]
         selected_call = next(
             (call for call in tool_calls if call.name == self.TOOL_NAME),
             None,
@@ -170,6 +176,8 @@ class LLMToolDecisionService:
             reason=str(arguments.get("reason") or "LLM selected scientific tools."),
             warnings=warnings,
             raw_tool_call=raw_tool_call,
+            llm_call_count=1,
+            llm_call_stages=["tool_decision"],
         )
 
     @staticmethod

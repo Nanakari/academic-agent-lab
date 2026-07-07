@@ -11,6 +11,9 @@ from app.agent.services import (
     ExperimentBlueprintService,
     FeasibilityService,
     LiteratureAnalysisService,
+    LLMReflectionService,
+    LLMScientificAnalysisService,
+    LLMStageResult,
     LLMToolDecisionService,
     PersistenceService,
     ResearchDirectionService,
@@ -41,6 +44,13 @@ class AIScientificAgent(BaseAgent):
     """Orchestrate planning, evidence, ideation, experiments, and verification."""
 
     SUPPORTED_EXTERNAL_SOURCES = {"arxiv", "github"}
+    LLM_STAGE_NAMES = {
+        "tool_decision",
+        "literature_analysis",
+        "idea_generation",
+        "experiment_design",
+        "reflection",
+    }
 
     def __init__(
         self,
@@ -59,8 +69,11 @@ class AIScientificAgent(BaseAgent):
         external_force_refresh: bool = False,
         external_evidence_service: ExternalEvidenceService | None = None,
         llm_tool_decision_enabled: bool | None = None,
+        llm_stages: list[str] | str | None = None,
     ) -> None:
         super().__init__(name="AIScientificAgent", max_steps=8)
+        self.llm = llm
+        self.llm_stages = self._normalize_llm_stages(llm_stages, llm=llm)
         self.project_root = (
             Path(project_root).resolve()
             if project_root
@@ -113,8 +126,14 @@ class AIScientificAgent(BaseAgent):
         self.paper_corpus = PaperCorpusIndexer(self.papers_dir)
         self.planner = ResearchPlanner()
         self.paper_analyzer = PaperAnalyzer()
-        self.idea_generator = ResearchIdeaGenerator(llm=llm)
-        self.experiment_designer = ExperimentDesigner()
+        self.idea_generator = ResearchIdeaGenerator(
+            llm=llm,
+            enabled=self._llm_stage_enabled("idea_generation"),
+        )
+        self.experiment_designer = ExperimentDesigner(
+            llm=llm,
+            enabled=self._llm_stage_enabled("experiment_design"),
+        )
         self.report_writer = ReportWriter()
         self.decision_policy = AgentDecisionPolicy()
         self.tool_decision_service = LLMToolDecisionService(
@@ -123,7 +142,8 @@ class AIScientificAgent(BaseAgent):
                 llm is not None
                 if llm_tool_decision_enabled is None
                 else llm_tool_decision_enabled
-            ),
+            )
+            and self._llm_stage_enabled("tool_decision"),
         )
         self.research_direction_service = ResearchDirectionService()
         self.feasibility_service = FeasibilityService()
@@ -131,6 +151,15 @@ class AIScientificAgent(BaseAgent):
         self.revision_service = RevisionService()
         self.literature_analysis_service = LiteratureAnalysisService(
             self.paper_analyzer
+        )
+        self.llm_scientific_analysis_service = LLMScientificAnalysisService(
+            deterministic_service=self.literature_analysis_service,
+            llm=llm,
+            enabled=self._llm_stage_enabled("literature_analysis"),
+        )
+        self.llm_reflection_service = LLMReflectionService(
+            llm=llm,
+            enabled=self._llm_stage_enabled("reflection"),
         )
         self.evidence_service = EvidenceService(
             self.project_root,
@@ -182,6 +211,7 @@ class AIScientificAgent(BaseAgent):
                 external_search_enabled=self.external_search_enabled,
                 external_sources=self.external_search_sources,
             )
+            llm_stage_results: list[LLMStageResult] = []
             evidence_context = self._retrieve_evidence(
                 expanded_query,
                 tool_decision.top_k,
@@ -257,7 +287,18 @@ class AIScientificAgent(BaseAgent):
                     user_query.strip(),
                 )
             )
-            literature_analysis = self._analyze_evidence(literature_context)
+            external_literature_evidence_dicts = [
+                item.to_dict() for item in external_literature_evidence
+            ]
+            literature_analysis, analysis_stage = (
+                self.llm_scientific_analysis_service.analyze(
+                    evidence_context=evidence_context,
+                    external_literature_evidence=external_literature_evidence_dicts,
+                    topic=user_query.strip(),
+                    fallback_evidence_context=literature_context,
+                )
+            )
+            llm_stage_results.append(analysis_stage)
             if has_excluded_topic_drift(
                 str(literature_analysis.get("research_gap", "")),
                 expanded_query,
@@ -287,11 +328,14 @@ class AIScientificAgent(BaseAgent):
             )
 
             ideas = self.idea_generator.generate_ideas(user_query.strip(), evidence_context)
+            llm_stage_results.append(self.idea_generator.last_stage_result)
             selected_idea = ideas[0]
             experiment_plan = self.experiment_designer.design_experiment(
                 selected_idea,
                 user_query,
+                evidence_context,
             )
+            llm_stage_results.append(self.experiment_designer.last_stage_result)
             self.current_step = 4
 
             history = self.scientific_memory.load_recent_ideas(limit=50)
@@ -303,9 +347,7 @@ class AIScientificAgent(BaseAgent):
                 history,
                 ideas,
                 topic=expanded_query,
-                external_literature_evidence=[
-                    item.to_dict() for item in external_literature_evidence
-                ],
+                external_literature_evidence=external_literature_evidence_dicts,
             )
             self.current_step = 5
 
@@ -338,9 +380,7 @@ class AIScientificAgent(BaseAgent):
                     history,
                     ideas,
                     topic=expanded_query,
-                    external_literature_evidence=[
-                        item.to_dict() for item in external_literature_evidence
-                    ],
+                    external_literature_evidence=external_literature_evidence_dicts,
                 )
             self.current_step = 6
             agent_trace.append(
@@ -366,6 +406,28 @@ class AIScientificAgent(BaseAgent):
                 evidence_context,
                 verification["evidence"],
                 literature_analysis,
+            )
+            reflection, reflection_stage = self.llm_reflection_service.reflect(
+                verification=verification,
+                evidence_status=evidence_assessment["status"],
+                selected_idea=selected_idea.to_dict(),
+                experiment_plan=experiment_plan.to_dict(),
+            )
+            llm_stage_results.append(reflection_stage)
+            llm_metadata = self._llm_stage_metadata(
+                tool_decision,
+                llm_stage_results,
+            )
+            evidence_source_breakdown = self._evidence_source_breakdown(
+                evidence_context
+            )
+            local_paper_evidence_count = evidence_source_breakdown.get(
+                "local_paper",
+                0,
+            )
+            memory_evidence_count = evidence_source_breakdown.get(
+                "scientific_memory",
+                0,
             )
             feasibility_assessment = self.feasibility_service.assess(
                 selected_direction=selected_direction,
@@ -427,15 +489,20 @@ class AIScientificAgent(BaseAgent):
                 "task_type": task_type.value,
                 "plan": plan.to_dict(),
                 "tool_decision": tool_decision.to_dict(),
+                **llm_metadata,
                 "evidence_context": evidence_context,
                 "evidence_status": evidence_assessment["status"],
                 "evidence_used": evidence_assessment["used"],
                 "evidence_gaps": evidence_assessment["gaps"],
                 "unsupported_claims": evidence_assessment["unsupported_claims"],
+                "evidence_source_breakdown": evidence_source_breakdown,
+                "local_paper_evidence_count": local_paper_evidence_count,
+                "memory_evidence_count": memory_evidence_count,
                 "corpus_warnings": list(self.paper_corpus.warnings),
                 "deduplicated_evidence_count": (
                     self.evidence_service.last_deduplicated_count
                 ),
+                "external_cache_used": external_result.cache_used,
                 "external_search_status": {
                     "enabled": external_result.enabled,
                     "run_at": external_result.run_at,
@@ -485,6 +552,7 @@ class AIScientificAgent(BaseAgent):
                 "experiment_plan": experiment_plan.to_dict(),
                 "verification": verification,
                 "verification_passed": verification_passed,
+                "llm_reflection": reflection,
                 "revision_performed": revision_performed,
                 "novelty_revision_strategy": novelty_revision_strategy,
                 "agent_trace": [entry.to_dict() for entry in agent_trace],
@@ -528,6 +596,66 @@ class AIScientificAgent(BaseAgent):
         """Compatibility wrapper around LiteratureAnalysisService."""
         return self.literature_analysis_service.analyze(evidence_context)
 
+    def _llm_stage_enabled(self, stage: str) -> bool:
+        return stage in self.llm_stages and self.llm is not None
+
+    @classmethod
+    def _normalize_llm_stages(
+        cls,
+        stages: list[str] | str | None,
+        *,
+        llm,
+    ) -> set[str]:
+        if llm is None:
+            return set()
+        if stages is None or stages == "all":
+            return set(cls.LLM_STAGE_NAMES)
+        if isinstance(stages, str):
+            raw_stages = [
+                item.strip()
+                for item in stages.split(",")
+                if item.strip()
+            ]
+        else:
+            raw_stages = [str(item).strip() for item in stages if str(item).strip()]
+        selected = {stage for stage in raw_stages if stage != "none"}
+        invalid = sorted(selected - cls.LLM_STAGE_NAMES)
+        if invalid:
+            raise ValueError("Unsupported llm_stages value(s): " + ", ".join(invalid))
+        return selected
+
+    @staticmethod
+    def _evidence_source_breakdown(evidence_context: list[dict]) -> dict[str, int]:
+        breakdown: dict[str, int] = {}
+        for item in evidence_context:
+            kind = str(item.get("kind") or "unknown")
+            breakdown[kind] = breakdown.get(kind, 0) + 1
+        return dict(sorted(breakdown.items()))
+
+    @staticmethod
+    def _llm_stage_metadata(
+        tool_decision,
+        stage_results: list[LLMStageResult],
+    ) -> dict:
+        stages = list(tool_decision.llm_call_stages)
+        fallback_stages = []
+        generated_sections = []
+        deterministic_sections = []
+        for item in stage_results:
+            if item.llm_used or item.fallback_used:
+                stages.append(item.stage)
+            if item.fallback_used:
+                fallback_stages.append(item.stage)
+            generated_sections.extend(item.generated_sections)
+            deterministic_sections.extend(item.deterministic_sections)
+        return {
+            "llm_call_count": len(stages),
+            "llm_call_stages": list(dict.fromkeys(stages)),
+            "llm_fallback_stages": list(dict.fromkeys(fallback_stages)),
+            "llm_generated_sections": list(dict.fromkeys(generated_sections)),
+            "deterministic_sections": list(dict.fromkeys(deterministic_sections)),
+        }
+
     @staticmethod
     def _novelty_revision_strategy(novelty: dict) -> str:
         literature_status = (
@@ -538,6 +666,12 @@ class AIScientificAgent(BaseAgent):
             return "no_sufficient_literature_novelty_evidence"
         if literature_status == "overlapping":
             return "literature_overlap_requires_human_review"
+        try:
+            max_similarity = float(local_overlap.get("max_similarity", 0.0))
+        except (TypeError, ValueError):
+            max_similarity = 0.0
+        if max_similarity >= 0.95:
+            return "local_memory_duplicate_requires_human_review"
         if local_overlap.get("has_overlap"):
             return "warning_only_local_overlap"
         return "not_required"

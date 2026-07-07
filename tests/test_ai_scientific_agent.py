@@ -29,6 +29,7 @@ from app.schemas.research_idea import ResearchIdea
 from app.schemas.scientific_task import ScientificTaskType
 from app.tools.paper_corpus import PaperCorpusIndexer
 from app.tools.paper_analyzer import PaperAnalyzer
+from app.tools.experiment_designer import ExperimentDesigner
 from app.tools.report_writer import ReportWriter
 from app.verifier.evidence_verifier import EvidenceVerifier
 from app.verifier.experiment_verifier import ExperimentVerifier
@@ -43,6 +44,81 @@ from app.verifier.topic_consistency import (
 
 
 FIXTURE_PAPERS = Path(__file__).parent / "fixtures" / "papers"
+
+
+class FakeScientificLLM:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def ask(self, messages: list[dict]) -> str:
+        prompt = messages[-1]["content"]
+        self.calls.append(prompt)
+        if "attack_models" in prompt:
+            return json.dumps({
+                "existing_methods": ["Verifier-gated tool routing."],
+                "attack_models": ["Indirect prompt injection"],
+                "defense_strategies": ["Argument allowlist"],
+                "evaluation_protocols": ["Mixed benign/adversarial tool tasks"],
+                "limitations": ["False refusal remains possible."],
+                "research_gaps": ["Tool-call defenses need benign success checks."],
+                "evidence_confidence": "moderate",
+                "missing_evidence": [],
+            })
+        if "ideas containing 3 to 5 items" in prompt:
+            return json.dumps({
+                "ideas": [
+                    {
+                        "title": "Verifier-gated tool-call safety",
+                        "hypothesis": "Verification reduces unsafe tool calls.",
+                        "motivation": "Prompt injection can steer tools.",
+                        "method": "Gate risky tool calls with a verifier.",
+                        "required_evidence": ["E1"],
+                        "expected_experiment": "Run mixed attack and benign tasks.",
+                        "risks": ["False refusal may rise."],
+                    },
+                    {
+                        "title": "Argument allowlist routing",
+                        "hypothesis": "Argument constraints reduce injection impact.",
+                        "motivation": "Unsafe arguments cause many failures.",
+                        "method": "Validate arguments before execution.",
+                        "required_evidence": ["E1"],
+                        "expected_experiment": "Compare against prompt-only safety.",
+                        "risks": ["Rules may be brittle."],
+                    },
+                    {
+                        "title": "Tool-output quarantine",
+                        "hypothesis": "Quarantine reduces instruction smuggling.",
+                        "motivation": "Tool outputs can carry malicious text.",
+                        "method": "Separate data extraction from instruction following.",
+                        "required_evidence": ["E1"],
+                        "expected_experiment": "Evaluate malicious tool outputs.",
+                        "risks": ["Latency may increase."],
+                    },
+                ]
+            })
+        if "attack_scenarios" in prompt and "failure_taxonomy" in prompt:
+            return json.dumps({
+                "attack_scenarios": ["Indirect prompt injection in retrieved pages"],
+                "tool_schemas": ["search_web(query: string)"],
+                "datasets": ["Mixed tool-call safety benchmark"],
+                "baselines": ["Unprotected tool-calling agent"],
+                "metrics": ["attack success rate", "safe tool-call rate"],
+                "ablations": ["Remove verifier gate"],
+                "failure_taxonomy": ["unsafe tool invocation"],
+                "reproducibility_notes": ["Pin model, prompts, and tool schemas."],
+                "risks": ["False refusal may increase."],
+                "expected_results": ["Unsafe tool calls decrease."],
+            })
+        if "conservative_revision_notes" in prompt:
+            return json.dumps({
+                "conservative_revision_notes": [
+                    "Treat as a pre-experiment proposal until more papers are added."
+                ],
+                "missing_evidence_suggestions": ["Add tool-use safety papers."],
+                "conclusion_strength": "bounded_pre_experiment",
+                "risk_warnings": ["Do not claim empirical success before running the benchmark."],
+            })
+        raise AssertionError("Unexpected LLM prompt")
 
 
 def complete_experiment_plan() -> ExperimentPlan:
@@ -75,6 +151,58 @@ class ResearchPlannerTests(unittest.TestCase):
             planner.classify_task("Design an experiment for agent memory"),
             ScientificTaskType.EXPERIMENT_DESIGN,
         )
+
+
+class ExperimentDesignerTests(unittest.TestCase):
+    def test_tool_call_safety_plan_uses_specific_benchmarks_and_metrics(self) -> None:
+        idea = ResearchIdea(
+            title="Verifier-gated tool calls",
+            hypothesis="A verifier may reduce unsafe tool calls.",
+            motivation="Indirect prompt injection can steer tool arguments.",
+            method="Route high-risk tool calls through a verifier.",
+            evidence_refs=["E1"],
+        )
+
+        plan = ExperimentDesigner().design_experiment(
+            idea,
+            "LLM Agent indirect prompt injection tool-call safety",
+        )
+        text = " ".join(
+            plan.datasets
+            + plan.baselines
+            + plan.metrics
+            + plan.implementation_notes
+        )
+
+        for metric in (
+            "attack success rate",
+            "safe tool-call rate",
+            "benign task success",
+            "false refusal",
+            "latency/cost",
+        ):
+            self.assertIn(metric, plan.metrics)
+        self.assertIn("Attack scenarios:", text)
+        self.assertIn("Defense mechanisms:", text)
+        self.assertIn("Benchmark types:", text)
+        self.assertIn("Baseline types:", text)
+        self.assertNotIn("One established public benchmark", text)
+        self.assertNotIn("Primary task score", text)
+
+    def test_default_plan_avoids_placeholder_benchmark_and_metric_names(self) -> None:
+        idea = ResearchIdea(
+            title="Evidence-aware planning",
+            hypothesis="Planning checks may improve reliability.",
+            motivation="Planning failures remain under uncertainty.",
+            method="Add transition checks to planning.",
+            evidence_refs=["E1"],
+        )
+
+        plan = ExperimentDesigner().design_experiment(idea, "planning robustness")
+        text = " ".join(plan.datasets + plan.metrics)
+
+        self.assertNotIn("One established public benchmark", text)
+        self.assertNotIn("Primary task score", text)
 
 
 class ScientificMemoryTests(unittest.TestCase):
@@ -662,6 +790,85 @@ class AIScientificAgentTests(unittest.TestCase):
             self.assertIn("Experiment Artifacts", report)
             self.assertIn("Pre-execution Blockers", report)
 
+    def test_llm_assisted_scientific_stages_are_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            papers_dir = root / "data" / "papers"
+            papers_dir.mkdir(parents=True)
+            (papers_dir / "tool_safety.txt").write_text(
+                "Abstract: LLM agents can misuse tools after indirect prompt injection. "
+                "Method: A verifier checks tool intent and arguments before execution. "
+                "Experiments: Mixed benign and adversarial tool-use tasks compare safe routing. "
+                "Limitations: False refusal and added latency remain open problems.",
+                encoding="utf-8",
+            )
+            llm = FakeScientificLLM()
+            agent = AIScientificAgent(
+                project_root=root,
+                output_dir=root / "outputs",
+                memory=ScientificMemory(root / "memory"),
+                llm=llm,
+                llm_tool_decision_enabled=False,
+                llm_stages=[
+                    "literature_analysis",
+                    "idea_generation",
+                    "experiment_design",
+                    "reflection",
+                ],
+            )
+
+            result = agent.run("LLM Agent tool-call safety")
+
+        self.assertEqual(result["llm_call_count"], 4)
+        self.assertEqual(
+            result["llm_call_stages"],
+            [
+                "literature_analysis",
+                "idea_generation",
+                "experiment_design",
+                "reflection",
+            ],
+        )
+        self.assertEqual(result["llm_fallback_stages"], [])
+        self.assertIn("candidate_ideas", result["llm_generated_sections"])
+        self.assertIn("experiment_plan", result["llm_generated_sections"])
+        self.assertIn(
+            "Verifier-gated tool-call safety",
+            result["candidate_ideas"][0]["title"],
+        )
+        self.assertEqual(
+            result["experiment_plan"]["attack_scenarios"],
+            ["Indirect prompt injection in retrieved pages"],
+        )
+        self.assertEqual(result["llm_reflection"]["mode"], "llm_assisted")
+        self.assertEqual(len(llm.calls), 4)
+
+    def test_offline_style_empty_llm_stages_use_deterministic_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            papers_dir = root / "data" / "papers"
+            papers_dir.mkdir(parents=True)
+            (papers_dir / "tool_safety.txt").write_text(
+                "Method: Verifiers inspect tool calls. "
+                "Limitations: Unsafe calls remain under prompt injection.",
+                encoding="utf-8",
+            )
+            agent = AIScientificAgent(
+                project_root=root,
+                output_dir=root / "outputs",
+                memory=ScientificMemory(root / "memory"),
+                llm=FakeScientificLLM(),
+                llm_tool_decision_enabled=False,
+                llm_stages=[],
+            )
+
+            result = agent.run("LLM Agent tool-call safety")
+
+        self.assertEqual(result["llm_call_count"], 0)
+        self.assertEqual(result["llm_call_stages"], [])
+        self.assertIn("candidate_ideas", result["deterministic_sections"])
+        self.assertIn("experiment_plan", result["deterministic_sections"])
+
     def test_unreadable_pdf_does_not_abort_local_evidence_scan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -887,6 +1094,19 @@ class AgentDecisionPolicyTests(unittest.TestCase):
             "report_as_exploratory_or_insufficient",
         )
 
+    def test_external_cache_hit_is_explicit_in_trace(self) -> None:
+        entry = self.policy.decide_after_external_retrieval(
+            step=1,
+            sources_requested=["arxiv"],
+            queries_used={"arxiv": "tool safety"},
+            evidence_items=[],
+            warnings=[],
+            cache_used=True,
+        )
+
+        self.assertIn("loaded from cache", entry.result)
+        self.assertIn("not from a live network request", entry.result)
+
 
 class ResearchDirectionServiceTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -1015,6 +1235,33 @@ class ResearchDirectionServiceTests(unittest.TestCase):
 
         self.assertEqual(selected.novelty_risk, "high")
         self.assertNotEqual(selected.recommended_priority, "high")
+
+    def test_high_local_memory_overlap_raises_novelty_risk(self) -> None:
+        verification = self.verification()
+        verification["novelty"] = {
+            "passed": True,
+            "issues": [],
+            "local_memory_overlap": {
+                "has_overlap": True,
+                "max_similarity": 0.97,
+                "matched_title": "Selected evidence-aware verifier",
+            },
+            "literature_novelty": {
+                "status": "potentially_distinct",
+                "risk": "low",
+            },
+        }
+
+        _, selected = self.service.plan(
+            topic="LVLM reliability",
+            literature_analysis=self.analysis,
+            candidate_ideas=self.ideas,
+            selected_idea=self.ideas[0],
+            evidence_context=self.evidence,
+            verification=verification,
+        )
+
+        self.assertEqual(selected.novelty_risk, "high")
 
     def test_empty_ideas_returns_conservative_fallback(self) -> None:
         directions, selected = self.service.plan(
@@ -1278,6 +1525,85 @@ class FeasibilityServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(assessment.resource_requirement, "unknown")
+
+
+class ReportWriterTests(unittest.TestCase):
+    def test_report_flags_memory_only_cache_and_high_local_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result = {
+                "selected_idea": {
+                    "title": "Verifier-gated tool calls",
+                    "hypothesis": "A verifier may reduce unsafe tool calls.",
+                },
+                "experiment_plan": complete_experiment_plan().to_dict(),
+                "literature_analysis": {
+                    "existing_methods": [],
+                    "key_limitations": [],
+                    "research_gap": "Tool-call safety remains hard.",
+                    "research_gap_status": "evidence_supported",
+                },
+                "topic": "LLM Agent tool-call safety",
+                "task_type": "research_proposal",
+                "plan": {"steps": []},
+                "evidence_status": "memory_only",
+                "local_paper_evidence_count": 0,
+                "memory_evidence_count": 1,
+                "evidence_context": [],
+                "verification": {
+                    "evidence": {
+                        "passed": True,
+                        "score": 1.0,
+                        "issues": [],
+                        "warnings": [],
+                        "supported_claims": [],
+                    },
+                    "novelty": {
+                        "passed": True,
+                        "score": 0.9,
+                        "issues": [],
+                        "warnings": [],
+                        "local_memory_overlap": {
+                            "has_overlap": True,
+                            "max_similarity": 0.97,
+                        },
+                    },
+                },
+                "external_search_status": {
+                    "enabled": True,
+                    "cache_used": True,
+                    "run_at": "2026-07-07T00:00:00",
+                    "retrieved_at_by_source": {"arxiv": "2026-07-06T00:00:00"},
+                    "cache_loaded_at": "2026-07-07T00:00:01",
+                },
+                "external_evidence": [],
+                "external_evidence_gaps": [],
+                "external_retrieval_warnings": [],
+                "evidence_gaps": [
+                    "No matching evidence was retrieved from the local paper corpus.",
+                ],
+                "unsupported_claims": [],
+                "corpus_warnings": [],
+                "candidate_ideas": [],
+                "research_directions": [],
+                "selected_direction": None,
+                "feasibility_assessment": None,
+                "experiment_blueprint": None,
+                "external_evidence_rejected_for_literature": [],
+                "agent_trace": [],
+                "revision_performed": False,
+            }
+
+            path = Path(directory) / "report.md"
+            ReportWriter().write_markdown_report(result, path)
+            report = path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "No matching evidence was retrieved from the local paper corpus",
+            report,
+        )
+        self.assertIn("External evidence was loaded from cache", report)
+        self.assertIn("**novelty**: NEEDS HUMAN REVIEW", report)
+        self.assertIn("duplicate proposal", report)
 
 
 class ExperimentBlueprintServiceTests(unittest.TestCase):
@@ -1689,6 +2015,40 @@ class ClaimFilteringAndDomainConsistencyTests(unittest.TestCase):
         )
         self.assertIn(
             "Research gap could not be established from retrieved evidence.",
+            assessment["gaps"],
+        )
+
+    def test_memory_only_evidence_is_not_marked_sufficient(self) -> None:
+        evidence = [{
+            "evidence_id": "M1",
+            "paper_id": "memory-note",
+            "title": "Saved scientific note",
+            "source_path": "memory:paper_note",
+            "file_type": "memory",
+            "page": None,
+            "section": "Memory",
+            "chunk_id": "memory-1",
+            "text": "A saved note mentions verifier-gated agent tools.",
+            "score": 0.72,
+            "matched_keywords": ["agent", "tools"],
+            "supporting_claim": "Saved note mentions verifier-gated agent tools.",
+            "support_level": "moderate",
+            "kind": "scientific_memory",
+        }]
+
+        assessment = VerificationPipeline.build_evidence_assessment(
+            evidence,
+            {
+                "passed": True,
+                "issues": [],
+                "unsupported_claims": [],
+            },
+            {"research_gap_status": "evidence_supported"},
+        )
+
+        self.assertEqual(assessment["status"], "memory_only")
+        self.assertIn(
+            "No matching evidence was retrieved from the local paper corpus.",
             assessment["gaps"],
         )
 

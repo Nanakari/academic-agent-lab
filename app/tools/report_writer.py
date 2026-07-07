@@ -47,6 +47,18 @@ class ReportWriter:
             f"Evidence status: **{result['evidence_status']}**",
             "",
         ])
+        if (
+            result.get("local_paper_evidence_count", 0) == 0
+            and result.get("memory_evidence_count", 0) > 0
+        ):
+            lines.extend([
+                (
+                    "> No matching evidence was retrieved from the local paper "
+                    "corpus. Current support comes from scientific memory and "
+                    "should be treated as weaker than local-paper evidence."
+                ),
+                "",
+            ])
         if result["evidence_context"]:
             for item in result["evidence_context"]:
                 lines.extend([
@@ -100,6 +112,14 @@ class ReportWriter:
                 "and local scientific memory."
             )
         else:
+            if external_status.get("cache_used"):
+                lines.extend([
+                    (
+                        "External evidence was loaded from cache; this was not "
+                        "a live network retrieval in this run."
+                    ),
+                    "",
+                ])
             if not external_evidence:
                 lines.append("No external evidence was retrieved.")
             else:
@@ -485,26 +505,64 @@ class ReportWriter:
             "",
         ])
         for field_name in (
-            "datasets", "baselines", "metrics", "ablation",
+            "datasets", "baselines", "metrics", "attack_scenarios",
+            "tool_schemas", "ablation", "failure_taxonomy",
             "expected_results", "risks", "implementation_notes",
+            "reproducibility_notes",
         ):
+            values = experiment.get(field_name, [])
+            if not values:
+                continue
             lines.extend([
                 f"### {field_name.replace('_', ' ').title()}",
                 "",
-                *[f"- {value}" for value in experiment[field_name]],
+                *[f"- {value}" for value in values],
                 "",
             ])
         lines.extend(["## Verification", ""])
         for name, verification in result["verification"].items():
+            label = "PASS" if verification["passed"] else "FAIL"
+            if name == "novelty" and self._has_high_local_memory_overlap(
+                verification
+            ):
+                label = "NEEDS HUMAN REVIEW"
             lines.append(
-                f"- **{name}**: {'PASS' if verification['passed'] else 'FAIL'} "
+                f"- **{name}**: {label} "
                 f"(score={verification['score']:.2f})"
             )
+            if name == "novelty" and self._has_high_local_memory_overlap(
+                verification
+            ):
+                lines.append(
+                    "  - Warning: Local draft overlap is >= 0.95; this may be "
+                    "a duplicate proposal and needs human confirmation."
+                )
             lines.extend(f"  - Issue: {issue}" for issue in verification["issues"])
             lines.extend(
                 f"  - Warning: {warning}"
                 for warning in verification.get("warnings", [])
             )
+        reflection = result.get("llm_reflection") or {}
+        if reflection:
+            lines.extend(["", "## Reflective Critique", ""])
+            for field_name in (
+                "conservative_revision_notes",
+                "missing_evidence_suggestions",
+                "risk_warnings",
+            ):
+                values = reflection.get(field_name) or []
+                if values:
+                    lines.extend([
+                        f"### {field_name.replace('_', ' ').title()}",
+                        "",
+                        *[f"- {value}" for value in values],
+                        "",
+                    ])
+            if reflection.get("conclusion_strength"):
+                lines.extend([
+                    f"Conclusion strength: **{reflection['conclusion_strength']}**",
+                    "",
+                ])
         agent_trace = result.get("agent_trace")
         if agent_trace:
             lines.extend(["", "## Agent Decision Trace", ""])
@@ -537,6 +595,19 @@ class ReportWriter:
         ])
         path.write_text("\n".join(lines), encoding="utf-8")
         return path
+
+    @classmethod
+    def _has_high_local_memory_overlap(cls, verification: dict) -> bool:
+        try:
+            similarity = float(
+                verification.get("local_memory_overlap", {}).get(
+                    "max_similarity",
+                    0.0,
+                )
+            )
+        except (TypeError, ValueError):
+            return False
+        return similarity >= 0.95
 
     @classmethod
     def _serialize(cls, value: Any) -> Any:

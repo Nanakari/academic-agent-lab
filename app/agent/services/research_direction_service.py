@@ -318,6 +318,14 @@ class ResearchDirectionService:
         if verification is None or "novelty" not in verification:
             return "unknown"
         novelty = verification["novelty"]
+        try:
+            local_similarity = float(
+                novelty.get("local_memory_overlap", {}).get("max_similarity", 0.0)
+            )
+        except (TypeError, ValueError):
+            local_similarity = 0.0
+        if local_similarity >= 0.95:
+            return "high"
         literature_risk = (
             novelty.get("literature_novelty", {}).get("risk")
         )

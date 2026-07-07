@@ -12,6 +12,9 @@ class ResearchIdea:
     motivation: str
     method: str
     evidence_refs: list[str] = field(default_factory=list)
+    required_evidence: list[str] = field(default_factory=list)
+    expected_experiment: str = ""
+    risks: list[str] = field(default_factory=list)
     novelty_score: float = 0.0
     feasibility_score: float = 0.0
     rank_score: float = 0.0

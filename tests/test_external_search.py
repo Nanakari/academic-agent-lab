@@ -340,6 +340,12 @@ class AgentExternalIntegrationTests(unittest.TestCase):
             result = agent.run("agent memory retrieval")
 
             self.assertEqual(result["external_search_status"]["enabled"], False)
+            self.assertEqual(result["external_cache_used"], False)
+            self.assertIn("local_paper", result["evidence_source_breakdown"])
+            self.assertGreaterEqual(result["local_paper_evidence_count"], 1)
+            self.assertEqual(result["memory_evidence_count"], 0)
+            self.assertEqual(result["llm_call_count"], 0)
+            self.assertEqual(result["llm_call_stages"], [])
             self.assertEqual(result["external_evidence"], [])
             self.assertIn("expanded_query", result)
             self.assertEqual(
