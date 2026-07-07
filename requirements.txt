@@ -4,3 +4,4 @@ sentence-transformers>=3.0.0
 numpy>=1.26.0
 PyMuPDF>=1.24.0
 streamlit>=1.36.0
+tomli>=2.0.0; python_version < "3.11"

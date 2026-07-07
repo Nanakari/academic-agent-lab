@@ -1,13 +1,15 @@
 # academic-agent-lab
 
-academic-agent-lab is a lightweight, offline-first, verifier-driven
-pre-experiment scientific agent MVP with optional external evidence retrieval.
+academic-agent-lab is a lightweight scientific assistant agent MVP. Its default
+CLI path uses an LLM tool-decision step, while the executed tools remain
+offline-first and verifier-driven with optional external evidence retrieval.
 
 ## Project Overview
 
 This project began as an `AcademicAgent` for local paper reading, summarization,
-and RAG question answering. It now includes an `AIScientificAgent` that follows
-a broader AI research workflow:
+and RAG question answering. The current mainline is an LLM-driven,
+offline-first, verifier-driven `AIScientificAgent` that follows a broader AI
+research workflow:
 
 1. classify and plan a research task;
 2. parse and retrieve evidence from local TXT, Markdown, and text-based PDF
@@ -19,8 +21,9 @@ a broader AI research workflow:
    reproducibility;
 7. write structured JSON/Markdown reports and run fixture-based evaluation.
 
-The original tool-calling `AcademicAgent` remains available through `main.py`.
-The scientific mode is an incremental extension rather than a replacement.
+The original tool-calling `AcademicAgent` remains available as an explicit
+legacy demo through `python main.py legacy-academic`. The scientific mode is
+the default project entry point.
 
 Python 3.11 or newer is required.
 
@@ -125,16 +128,72 @@ Install dependencies:
 python -m pip install -r requirements.txt
 ```
 
+For development and tests, install the development dependencies:
+
+```bash
+python -m pip install -r requirements-dev.txt
+```
+
+Create local configuration when you need to edit settings or run the default
+LLM-driven scientific agent:
+
+```bash
+cp config.example.toml config.toml
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item config.example.toml config.toml
+```
+
+If `config.toml` is absent, application config loading falls back to the
+tracked `config.example.toml`. `config.toml` is ignored by Git and should stay
+local.
+
+Set a Gemini API key for the default agent mode:
+
+```bash
+export GEMINI_API_KEY=...
+```
+
+Windows PowerShell:
+
+```powershell
+$env:GEMINI_API_KEY="..."
+```
+
 Run all tests:
 
 ```bash
 pytest -q
 ```
 
+Run the default top-level entry point:
+
+```bash
+python main.py
+```
+
+By default, this calls the LLM API first so the model can choose bounded tools
+such as local evidence search, scientific memory, optional external metadata
+retrieval, and verification. For CI or offline regression checks, disable the
+LLM decision step explicitly:
+
+```bash
+python main.py --offline
+```
+
 Run the fixture-backed AI Scientific Agent demo:
 
 ```bash
 python app/ai_scientific_demo.py --topic "LVLM hallucination mitigation" --papers-dir tests/fixtures/papers --top-k 5
+```
+
+Offline regression form:
+
+```bash
+python app/ai_scientific_demo.py --topic "LVLM hallucination mitigation" --papers-dir tests/fixtures/papers --top-k 5 --offline
 ```
 
 Run the Streamlit Web UI from the project root:
@@ -155,6 +214,18 @@ The demo uses temporary isolated ScientificMemory, so running the same Quick
 Start command repeatedly does not create novelty failures from earlier demo
 runs. Application code can still use persistent `data/research_memory/`.
 
+Run the legacy `AcademicAgent` demo only when you specifically need the
+original LLM tool-calling example:
+
+```bash
+python main.py legacy-academic --paper-path data/demo_paper.pdf
+```
+
+This legacy path requires `GEMINI_API_KEY` or an `api_key` value in local
+`config.toml`. The default `AIScientificAgent` CLI also requires an API key
+because it asks the LLM to decide which bounded tools to use. Use `--offline`
+only when you intentionally want the deterministic local regression path.
+
 Run Evaluation Mode:
 
 ```bash
@@ -170,7 +241,8 @@ python app/real_paper_validation_demo.py --topic "LVLM hallucination mitigation"
 Local outputs are written below `outputs/` and are ignored by Git.
 Place private/local papers under `data/papers/`; that directory is also ignored
 except for `.gitkeep`. `config.toml` is local configuration and must not be
-committed. Use the tracked `config.example.toml` as a safe template.
+committed. Use the tracked `config.example.toml` as a safe template; if
+`config.toml` is missing, `load_config()` falls back to the example template.
 
 ## AI Scientific Agent Mode
 

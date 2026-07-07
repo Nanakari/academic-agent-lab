@@ -29,30 +29,38 @@ class EvidenceService:
         self.memory = memory
         self.last_deduplicated_count = 0
 
-    def retrieve(self, query: str, top_k: int = 5) -> list[dict]:
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 5,
+        *,
+        use_local_papers: bool = True,
+        use_scientific_memory: bool = True,
+    ) -> list[dict]:
         """Search papers first, then fill available slots from paper-note memory."""
         limit = max(1, int(top_k))
         selected = []
-        for evidence in self.paper_corpus.search(query, top_k=limit * 3):
-            item = evidence.to_dict()
-            source_path = Path(item["source_path"])
-            try:
-                display_source = source_path.relative_to(self.project_root).as_posix()
-            except ValueError:
-                display_source = str(source_path)
-            item.update(
-                {
-                    "source": display_source,
-                    "excerpt": item["text"],
-                    "kind": "local_paper",
-                }
-            )
-            selected.append(item)
+        if use_local_papers:
+            for evidence in self.paper_corpus.search(query, top_k=limit * 3):
+                item = evidence.to_dict()
+                source_path = Path(item["source_path"])
+                try:
+                    display_source = source_path.relative_to(self.project_root).as_posix()
+                except ValueError:
+                    display_source = str(source_path)
+                item.update(
+                    {
+                        "source": display_source,
+                        "excerpt": item["text"],
+                        "kind": "local_paper",
+                    }
+                )
+                selected.append(item)
 
         selected, local_duplicates = self._deduplicate(selected)
         selected = selected[:limit]
         remaining = limit - len(selected)
-        if remaining > 0:
+        if use_scientific_memory and remaining > 0:
             selected.extend(self._search_memory(query, remaining))
         selected, combined_duplicates = self._deduplicate(selected)
         selected = selected[:limit]

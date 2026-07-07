@@ -1,4 +1,4 @@
-"""Offline-first AI Scientific Agent MVP."""
+"""LLM-driven, verifier-bounded AI Scientific Agent MVP."""
 
 from __future__ import annotations
 
@@ -11,8 +11,10 @@ from app.agent.services import (
     ExperimentBlueprintService,
     FeasibilityService,
     LiteratureAnalysisService,
+    LLMToolDecisionService,
     PersistenceService,
     ResearchDirectionService,
+    RevisionService,
     VerificationPipeline,
 )
 from app.agent.services.external_search import (
@@ -38,6 +40,8 @@ from app.tools.research_idea_generator import ResearchIdeaGenerator
 class AIScientificAgent(BaseAgent):
     """Orchestrate planning, evidence, ideation, experiments, and verification."""
 
+    SUPPORTED_EXTERNAL_SOURCES = {"arxiv", "github"}
+
     def __init__(
         self,
         project_root: str | Path | None = None,
@@ -54,6 +58,7 @@ class AIScientificAgent(BaseAgent):
         external_cache_enabled: bool = True,
         external_force_refresh: bool = False,
         external_evidence_service: ExternalEvidenceService | None = None,
+        llm_tool_decision_enabled: bool | None = None,
     ) -> None:
         super().__init__(name="AIScientificAgent", max_steps=8)
         self.project_root = (
@@ -79,11 +84,26 @@ class AIScientificAgent(BaseAgent):
             if external_search_sources is None
             else external_search_sources
         )
+        if isinstance(requested_external_sources, str):
+            requested_external_sources = requested_external_sources.split(",")
         self.external_search_sources = [
-            source.casefold()
+            str(source).strip().casefold()
             for source in requested_external_sources
-            if source.casefold() in {"arxiv", "github"}
+            if str(source).strip()
         ]
+        invalid_external_sources = sorted(
+            set(self.external_search_sources) - self.SUPPORTED_EXTERNAL_SOURCES
+        )
+        if invalid_external_sources:
+            raise ValueError(
+                "Unsupported external_search_sources value(s): "
+                + ", ".join(invalid_external_sources)
+            )
+        if self.external_search_enabled and not self.external_search_sources:
+            raise ValueError(
+                "external_search_sources must include at least one supported source "
+                "when external_search_enabled is true."
+            )
         self.external_max_results_per_source = max(
             1, int(external_max_results_per_source)
         )
@@ -97,9 +117,18 @@ class AIScientificAgent(BaseAgent):
         self.experiment_designer = ExperimentDesigner()
         self.report_writer = ReportWriter()
         self.decision_policy = AgentDecisionPolicy()
+        self.tool_decision_service = LLMToolDecisionService(
+            llm=llm,
+            enabled=(
+                llm is not None
+                if llm_tool_decision_enabled is None
+                else llm_tool_decision_enabled
+            ),
+        )
         self.research_direction_service = ResearchDirectionService()
         self.feasibility_service = FeasibilityService()
         self.experiment_blueprint_service = ExperimentBlueprintService()
+        self.revision_service = RevisionService()
         self.literature_analysis_service = LiteratureAnalysisService(
             self.paper_analyzer
         )
@@ -147,17 +176,31 @@ class AIScientificAgent(BaseAgent):
             self.current_step = 1
 
             expanded_query = normalize_research_query(user_query)
+            tool_decision = self.tool_decision_service.decide(
+                topic=user_query.strip(),
+                default_top_k=self.top_k,
+                external_search_enabled=self.external_search_enabled,
+                external_sources=self.external_search_sources,
+            )
             evidence_context = self._retrieve_evidence(
                 expanded_query,
-                self.top_k,
+                tool_decision.top_k,
+                use_local_papers=tool_decision.use_local_evidence_search,
+                use_scientific_memory=tool_decision.use_scientific_memory,
             )
             self.current_step = 2
+            run_external_search = tool_decision.use_external_search
+            run_external_sources = (
+                tool_decision.external_sources
+                if tool_decision.external_sources
+                else list(self.external_search_sources)
+            )
             planned_external_queries = (
                 self.external_query_builder.build_queries(
                     expanded_query,
                     max_queries=1,
                 )
-                if self.external_search_enabled
+                if run_external_search
                 else []
             )
             external_query = (
@@ -165,18 +208,18 @@ class AIScientificAgent(BaseAgent):
                 if planned_external_queries
                 else user_query.strip()
             )
-            if self.external_search_enabled:
+            if run_external_search:
                 source_queries = {
                     source: self.external_query_builder.for_source(
                         external_query,
                         source,
                     )
-                    for source in self.external_search_sources
+                    for source in run_external_sources
                 }
                 external_result = self.external_evidence_service.retrieve(
                     external_query,
-                    use_arxiv="arxiv" in self.external_search_sources,
-                    use_github="github" in self.external_search_sources,
+                    use_arxiv="arxiv" in run_external_sources,
+                    use_github="github" in run_external_sources,
                     max_results_per_source=self.external_max_results_per_source,
                     source_queries=source_queries,
                 )
@@ -190,11 +233,11 @@ class AIScientificAgent(BaseAgent):
                 external_result.queries_used.values()
             ))
             trace_step_offset = 0
-            if self.external_search_enabled:
+            if run_external_search:
                 agent_trace.append(
                     self.decision_policy.decide_after_external_retrieval(
                         step=1,
-                        sources_requested=list(self.external_search_sources),
+                        sources_requested=list(run_external_sources),
                         queries_used=dict(external_result.queries_used),
                         evidence_items=external_result.evidence_items,
                         warnings=external_result.warnings,
@@ -281,7 +324,7 @@ class AIScientificAgent(BaseAgent):
             verification = initial_verification
             revision_performed = False
             if revision_needed:
-                selected_idea, experiment_plan = self._revise_once(
+                selected_idea, experiment_plan = self.revision_service.revise_once(
                     selected_idea,
                     experiment_plan,
                     evidence_context,
@@ -354,8 +397,8 @@ class AIScientificAgent(BaseAgent):
                 )
             )
             external_evidence_gaps = []
-            if self.external_search_enabled:
-                if "arxiv" in self.external_search_sources:
+            if run_external_search:
+                if "arxiv" in run_external_sources:
                     external_evidence_gaps.append(
                         "Only metadata/abstract-level arXiv evidence was retrieved; "
                         "full-text verification was not performed."
@@ -372,7 +415,7 @@ class AIScientificAgent(BaseAgent):
                             "from literature analysis because they did not meet "
                             "the relevance threshold."
                         )
-                if "github" in self.external_search_sources:
+                if "github" in run_external_sources:
                     external_evidence_gaps.append(
                         "GitHub repositories are implementation evidence, not "
                         "scientific validation."
@@ -383,6 +426,7 @@ class AIScientificAgent(BaseAgent):
                 "expanded_query": expanded_query,
                 "task_type": task_type.value,
                 "plan": plan.to_dict(),
+                "tool_decision": tool_decision.to_dict(),
                 "evidence_context": evidence_context,
                 "evidence_status": evidence_assessment["status"],
                 "evidence_used": evidence_assessment["used"],
@@ -402,8 +446,8 @@ class AIScientificAgent(BaseAgent):
                     "cache_loaded_at": external_result.cache_loaded_at,
                     "cache_used": external_result.cache_used,
                     "sources_requested": (
-                        list(self.external_search_sources)
-                        if self.external_search_enabled
+                        list(run_external_sources)
+                        if run_external_search
                         else []
                     ),
                     "sources_used": list(external_result.sources_used),
@@ -464,9 +508,21 @@ class AIScientificAgent(BaseAgent):
         """BaseAgent compatibility; this orchestrator executes atomically in run()."""
         raise NotImplementedError("AIScientificAgent uses the structured run() workflow.")
 
-    def _retrieve_evidence(self, query: str, top_k: int | None = None) -> list[dict]:
+    def _retrieve_evidence(
+        self,
+        query: str,
+        top_k: int | None = None,
+        *,
+        use_local_papers: bool = True,
+        use_scientific_memory: bool = True,
+    ) -> list[dict]:
         """Compatibility wrapper around the evidence service."""
-        return self.evidence_service.retrieve(query, top_k or self.top_k)
+        return self.evidence_service.retrieve(
+            query,
+            top_k or self.top_k,
+            use_local_papers=use_local_papers,
+            use_scientific_memory=use_scientific_memory,
+        )
 
     def _analyze_evidence(self, evidence_context: list[dict]) -> dict:
         """Compatibility wrapper around LiteratureAnalysisService."""
@@ -529,29 +585,10 @@ class AIScientificAgent(BaseAgent):
         ]
         return literature_context, selected_external, rejected_external
 
-    @staticmethod
-    def _revise_once(idea, experiment_plan, evidence_context):
-        """Perform one bounded revision based on common verifier failures."""
-        if evidence_context:
-            idea.evidence_refs = [
-                item["evidence_id"] for item in evidence_context[:3]
-            ]
-            idea.motivation = (
-                f"Grounded in {', '.join(idea.evidence_refs)}; this remains a hypothesis "
-                "to test rather than a claim of established improvement."
-            )
-        else:
-            idea.hypothesis = "Exploratory hypothesis: " + idea.hypothesis
-
-        # Make the revised candidate distinguishable from a previously saved formulation.
-        idea.title = f"Cross-setting validation of {idea.title}"
-        idea.method += (
-            " Validate the mechanism on both in-domain and out-of-domain splits, "
-            "with a compute-matched control."
+    def _revise_once(self, idea, experiment_plan, evidence_context):
+        """Compatibility wrapper for callers that used the old helper directly."""
+        return self.revision_service.revise_once(
+            idea,
+            experiment_plan,
+            evidence_context,
         )
-        if not experiment_plan.implementation_notes:
-            experiment_plan.implementation_notes = [
-                "Pin code, model, dataset, seed, and dependency versions."
-            ]
-        experiment_plan.method = idea.method
-        return idea, experiment_plan
