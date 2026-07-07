@@ -14,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.agent.ai_scientific_agent import AIScientificAgent
+from app.cli.scientific import build_default_llm
 from app.frontend.chinese_renderer import (
     render_chinese_markdown_report,
     render_chinese_summary,
@@ -354,6 +355,14 @@ def main() -> None:
         default=["arxiv", "github"],
         disabled=not use_external_search,
     )
+    offline_mode = st.checkbox(
+        "Offline regression mode (disable LLM tool decision)",
+        value=False,
+        help=(
+            "Default runs call the configured LLM so the agent can choose tools. "
+            "Enable only for offline regression checks."
+        ),
+    )
 
     if st.button("运行 Agent", type="primary"):
         if not topic.strip():
@@ -377,11 +386,14 @@ def main() -> None:
                         )
                     )
                 with st.spinner("正在运行 AIScientificAgent，请稍候……"):
+                    llm = None if offline_mode else build_default_llm()
                     agent = AIScientificAgent(
                         project_root=PROJECT_ROOT,
                         output_dir=OUTPUT_DIR,
                         papers_dir=PAPERS_DIR,
                         top_k=int(top_k),
+                        llm=llm,
+                        llm_tool_decision_enabled=not offline_mode,
                         external_search_enabled=use_external_search,
                         external_search_sources=list(external_sources),
                     )

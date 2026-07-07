@@ -118,7 +118,7 @@ def run_scientific_from_args(
     if not topic:
         raise SystemExit("--topic must not be empty.")
 
-    llm = None if args.offline else _build_llm_for_cli()
+    llm = None if args.offline else build_default_llm()
     root = Path(project_root)
     with tempfile.TemporaryDirectory(prefix="ai-scientific-cli-") as temp:
         agent = AIScientificAgent(
@@ -139,7 +139,7 @@ def run_scientific_from_args(
         return agent.run(topic)
 
 
-def _build_llm_for_cli():
+def build_default_llm():
     """Create the default LLM client for user-facing agent runs."""
     from app.config import load_config
     from app.llm import LLM

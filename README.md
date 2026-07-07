@@ -238,6 +238,12 @@ Run Real Paper Validation:
 python app/real_paper_validation_demo.py --topic "LVLM hallucination mitigation" --papers-dir data/papers --top-k 8
 ```
 
+Offline regression form:
+
+```bash
+python app/real_paper_validation_demo.py --topic "LVLM hallucination mitigation" --papers-dir data/papers --top-k 8 --offline
+```
+
 Local outputs are written below `outputs/` and are ignored by Git.
 Place private/local papers under `data/papers/`; that directory is also ignored
 except for `.gitkeep`. `config.toml` is local configuration and must not be
@@ -387,6 +393,9 @@ python app/real_paper_validation_demo.py \
   --papers-dir data/papers \
   --top-k 8
 ```
+
+Use `--offline` only when you intentionally want to skip the LLM tool-decision
+step for regression checks.
 
 Outputs:
 

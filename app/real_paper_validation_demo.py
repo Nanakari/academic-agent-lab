@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.agent.ai_scientific_agent import AIScientificAgent
+from app.cli.scientific import build_default_llm
 from app.evaluation.eval_metrics import EvalMetricsCalculator
 from app.evaluation.eval_report import EvaluationReportWriter
 from app.evaluation.validation_report import RealPaperValidationReportWriter
@@ -47,6 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(PROJECT_ROOT / "outputs" / "real_paper_validation"),
         help="Directory for validation artifacts.",
     )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Disable LLM tool-decision calls for offline regression checks.",
+    )
     return parser
 
 
@@ -57,6 +63,7 @@ def run_real_paper_validation(
     top_k: int = 8,
     output_dir: str | Path | None = None,
     project_root: str | Path = PROJECT_ROOT,
+    offline: bool = False,
 ) -> dict:
     """Run agent plus metrics, or return a friendly empty-corpus result."""
     root = Path(project_root).resolve()
@@ -80,6 +87,7 @@ def run_real_paper_validation(
             "scanned_papers": 0,
         }
 
+    llm = None if offline else build_default_llm()
     with tempfile.TemporaryDirectory(prefix="real-paper-validation-") as temp:
         agent = AIScientificAgent(
             project_root=root,
@@ -87,6 +95,8 @@ def run_real_paper_validation(
             output_dir=output_path,
             top_k=top_k,
             memory=ScientificMemory(Path(temp) / "memory"),
+            llm=llm,
+            llm_tool_decision_enabled=not offline,
             domain_mode="strict",
         )
         agent_result = agent.run(topic)
@@ -141,6 +151,7 @@ def main() -> None:
         papers_dir=args.papers_dir,
         top_k=max(1, args.top_k),
         output_dir=args.output_dir,
+        offline=args.offline,
     )
     if result["status"] == "no_papers":
         print(result["message"])
