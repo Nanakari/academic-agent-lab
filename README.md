@@ -1,5 +1,7 @@
 # academic-agent-lab
 
+[![CI](https://github.com/Nanakari/academic-agent-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/Nanakari/academic-agent-lab/actions/workflows/ci.yml)
+
 academic-agent-lab is a lightweight scientific assistant agent MVP. Its default
 CLI path uses an LLM tool-decision step, while the executed tools remain
 offline-first and verifier-driven with optional external evidence retrieval.
@@ -468,3 +470,16 @@ Short tracked examples:
 - human expert evaluation of ideas and experiment plans
 - multi-agent debate, critique, and evidence adjudication
 - sandboxed code generation and experiment execution
+
+## Contributing and Security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the local development workflow and
+required checks. Report sensitive problems according to
+[SECURITY.md](SECURITY.md); never attach private papers, credentials, or local
+research artifacts to a public issue.
+
+## License
+
+No open-source license is currently granted for this repository. Public
+visibility does not by itself grant permission to copy, modify, or distribute
+the code or bundled documents.
